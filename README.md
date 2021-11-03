@@ -4,6 +4,8 @@
 
 ## Run locally
 
+Create a `.env` file. Use `example.env` as a reference.
+
 ```
 rethinkdb --http-port 5001
 node migrate.js
