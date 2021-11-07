@@ -2,13 +2,26 @@
     "name": "socket-chat-example",
     "version": "0.0.1",
     "description": "my first socket.io app",
+    "scripts": {
+        "build": "webpack",
+        "build-watch": "webpack --watch"
+    },
     "dependencies": {
+        "client-oauth2": "^4.3.3",
         "connect-history-api-fallback": "^1.6.0",
         "dotenv": "^10.0.0",
         "express": "^4.17.1",
+        "jwt-decode": "^3.1.2",
         "lorem-ipsum": "^2.0.3",
         "morgan": "^1.10.0",
         "rethinkdb": "^2.4.2",
         "socket.io": "^2.3.0"
+    },
+    "devDependencies": {
+        "path": "^0.12.7",
+        "process": "^0.11.10",
+        "querystring-es3": "^0.2.1",
+        "webpack": "^5.61.0",
+        "webpack-cli": "^4.9.1"
     }
 }

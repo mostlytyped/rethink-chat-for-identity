@@ -2,7 +2,10 @@ var rethink = require("rethinkdb");
 
 var express = require("express");
 var morgan = require("morgan");
+var history = require("connect-history-api-fallback");
+
 const app = express();
+app.use(history());
 app.use(morgan("combined"));
 
 var http = require("http").createServer(app);
@@ -14,7 +17,7 @@ const rdbName = process.env.RETHINKDB_NAME;
 const rdbUser = process.env.RETHINKDB_USERNAME;
 const rdbPass = process.env.RETHINKDB_PASSWORD;
 
-const listenPort = process.env.PORT || "3001";
+const listenPort = process.env.PORT || "8080";
 
 rethink.connect(
     { host: rdbHost, port: rdbPort, username: rdbUser, password: rdbPass, db: rdbName },
@@ -24,6 +27,7 @@ rethink.connect(
         const watchedQueries = {};
 
         app.use(express.static("public"));
+        app.use(express.static("dist"));
 
         app.get("/db/:table", (req, res) => {
             let query = rethink.table(req.params.table);

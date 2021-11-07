@@ -52,13 +52,14 @@ body {
 
 .chatroom {
     display: grid;
-    height: 100%;
+    height: calc(100% - 46px);
     max-width: 1200px;
     background-color: white;
     margin: 0 auto;
     grid-template-rows: auto 4em;
-    grid-template-areas: "chatlog"
-                         "msgform";
+    grid-template-areas:
+        "chatlog"
+        "msgform";
     overflow: hidden;
 
     form {
@@ -117,5 +118,33 @@ body {
         padding: 2em;
         background: white;
         border: 1px solid black;
+    }
+}
+
+.app {
+    background: pink;
+    height: 100vh;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px;
+    height: 46px;
+}
+
+.header-brand {
+    padding: 0.5em;
+}
+
+.header-menu {
+    margin: 0;
+    list-style: none;
+    padding: 0;
+    display: flex;
+
+    li {
+        padding: 0.5em;
     }
 }
