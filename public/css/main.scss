@@ -48,17 +48,14 @@ body {
     }
 }
 
-.chatroom {
+.chat-room {
     display: grid;
-    height: calc(100% - 46px);
+    grid-template-columns: 3fr 1fr;
     max-width: 1200px;
     background-color: white;
     margin: 0 auto;
-    grid-template-rows: auto 4em;
-    grid-template-areas:
-        "chatlog"
-        "msgform";
     overflow: hidden;
+    height: calc(100% - 46px);
 
     form {
         grid-area: msgform;
@@ -82,31 +79,40 @@ body {
             font-weight: bold;
         }
     }
+}
 
-    #chatlog {
-        grid-area: chatlog;
-        list-style-type: none;
-        margin: 0;
-        padding: 0;
-        display: flex;
-        flex-direction: column-reverse;
-        overflow-y: auto;
-        li {
-            padding: 5px 10px;
-            display: grid;
-            grid-template-columns: 8em 5em auto;
-            .timestamp {
-                font-style: italic;
-                color: #999;
-            }
-            .user {
-                font-weight: bold;
-            }
-            &:nth-child(odd) {
-                background-color: rgb(210, 225, 241);
-            }
+.chat-ui {
+    height: 100%;
+}
+
+#chatlog {
+    height: calc(100% - 70px);
+    list-style-type: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column-reverse;
+    overflow-y: auto;
+    li {
+        padding: 5px 10px;
+        display: grid;
+        grid-template-columns: 8em 5em auto;
+        .timestamp {
+            font-style: italic;
+            color: #999;
+        }
+        .user {
+            font-weight: bold;
+        }
+        &:nth-child(odd) {
+            background-color: rgb(210, 225, 241);
         }
     }
+}
+
+.chat-permissions {
+    background: #ccc;
+    padding: 1em;
 }
 
 .app {

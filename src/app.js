@@ -37,13 +37,6 @@ const App = Vue.component("app", {
             // not reactive
             return localStorage.getItem("token");
         },
-        ownerOrGuest: function () {
-            if (this.idTokenDecoded.sub === this.$route.params.userId) {
-                return "Owner of room";
-            } else {
-                return "Guest in room";
-            }
-        },
     },
     methods: {
         signOut() {
@@ -64,7 +57,6 @@ const App = Vue.component("app", {
         <div>
             <ul class="header-menu">
                 <template v-if="loggedIn">
-                    <li>{{ ownerOrGuest }}</li>
                     <li>{{ idTokenDecoded.sub }}</li>
                     <li>{{ idTokenDecoded.email }}</li>
                     <li>{{ idTokenDecoded.name }}</li>
@@ -87,6 +79,9 @@ const ChatRoom = Vue.component("chat-room", {
             chats: [],
             message: "",
             handle: null, // for socket.io
+            userIdsWithAccess: [],
+            userIdsWithAccessStr: "",
+            hasAccess: true,
         };
     },
     async created() {
@@ -114,7 +109,8 @@ const ChatRoom = Vue.component("chat-room", {
         //
         // rethink id
 
-        this.updateChats();
+        this.fetchChats();
+        this.fetchPermissions();
 
         // end rethink id
         //
@@ -127,10 +123,12 @@ const ChatRoom = Vue.component("chat-room", {
         roomTableName: function () {
             return `${ROOM_TABLE_NAMESPACE}${this.roomId}`;
         },
+        isOwner: function () {
+            return this.idTokenDecoded.sub === this.$route.params.userId;
+        },
     },
     methods: {
-        async updateChats() {
-            console.log("this.roomTableName", this.roomTableName);
+        async fetchChats() {
             const chatsResp = await fetch(`${API_URL}/users/${this.userId}/tables/${this.roomTableName}`, {
                 headers: {
                     "Content-Type": "application/json",
@@ -139,18 +137,14 @@ const ChatRoom = Vue.component("chat-room", {
                 },
             });
 
-            console.log("chatsResp", chatsResp);
-            console.log("chatsResp.status", chatsResp.status);
-
             if (chatsResp.status >= 400) {
                 const errorResp = await chatsResp.json();
                 console.log("error getting chats: ", errorResp.message);
+                this.hasAccess = false;
                 return;
             }
 
             const chats = await chatsResp.json();
-
-            console.log("chats pre sort", chats);
 
             chats.sort(function (a, b) {
                 if (a.ts > b.ts) return -1;
@@ -159,6 +153,33 @@ const ChatRoom = Vue.component("chat-room", {
             });
 
             this.chats = chats;
+        },
+        async fetchPermissions() {
+            if (!this.isOwner) {
+                return;
+            }
+
+            const permissionsResp = await fetch(
+                `${API_URL}/users/${this.userId}/tables/${this.roomTableName}/permissions`,
+                {
+                    headers: {
+                        "Content-Type": "application/json",
+                        Accept: "application/json",
+                        Authorization: `Bearer ${localStorage.getItem("token")}`,
+                    },
+                },
+            );
+
+            if (permissionsResp.status >= 400) {
+                const errorResp = await permissionsResp.json();
+                console.log("error getting permissions: ", errorResp.message);
+                return;
+            }
+
+            this.userIdsWithAccess = await permissionsResp.json();
+            console.log("this.userIdsWithAccess", this.userIdsWithAccess);
+
+            this.userIdsWithAccessStr = this.userIdsWithAccess.join(",");
         },
         async sendMessage() {
             const chat = {
@@ -181,26 +202,59 @@ const ChatRoom = Vue.component("chat-room", {
                 body: JSON.stringify(chat),
             });
 
-            this.updateChats();
+            this.fetchChats();
 
             this.message = "";
         },
+        async updatePermissions() {
+            console.log("update permissions");
+            await fetch(`${API_URL}/users/${this.userId}/tables/${this.roomTableName}/permissions`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Accept: "application/json",
+                    Authorization: `Bearer ${localStorage.getItem("token")}`,
+                },
+                body: JSON.stringify({ userIds: this.userIdsWithAccessStr }),
+            });
+            this.fetchPermissions();
+        },
     },
     template: `
-<div class="chatroom">
-    <ul id="chatlog">
-        <li v-for="chat in chats">
-            <span class="timestamp">
-                {{ new Date(chat.ts).toLocaleString(undefined, {dateStyle: 'short', timeStyle: 'short'}) }}
-            </span>
-            <span class="user">{{ chat.username }}:</span>
-            <span class="msg">{{ chat.msg }}</span>
-        </li>
-    </ul>
-    <form v-on:submit.prevent="sendMessage">
-        <input v-model="message" autocomplete="off" />
-        <button>Send</button>
-    </form>
+<div class="chat-room">
+    <div class="chat-ui">
+        <ul id="chatlog">
+            <li v-for="chat in chats">
+                <span class="timestamp">
+                    {{ new Date(chat.ts).toLocaleString(undefined, {dateStyle: 'short', timeStyle: 'short'}) }}
+                </span>
+                <span class="user">{{ chat.username }}:</span>
+                <span class="msg">{{ chat.msg }}</span>
+            </li>
+        </ul>
+        <form v-on:submit.prevent="sendMessage">
+            <input v-model="message" autocomplete="off" />
+            <button>Send</button>
+        </form>
+    </div>
+    <div class="chat-permissions">
+        <template v-if="isOwner">
+            <h3>User IDs with Access</h3>
+            <ul>
+                <li v-for="(userId, index) of userIdsWithAccess" :key.id="index">
+                    {{ userId }}
+                </li>
+            </ul>
+            <form v-on:submit.prevent="updatePermissions">
+                <input type="text" v-model="userIdsWithAccessStr" />
+                <button>Update</button>
+            </form>
+        </template>
+        <template v-else>
+            <p>You are a guest in this room.</p>
+            <p v-if="!hasAccess">You do not have access to this room.</p>
+        </template>
+    </div>
 </div>
     `,
 });
