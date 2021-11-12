@@ -37,6 +37,13 @@ const App = Vue.component("app", {
             // not reactive
             return localStorage.getItem("token");
         },
+        ownerOrGuest: function () {
+            if (this.idTokenDecoded.sub === this.$route.params.userId) {
+                return "Owner of room";
+            } else {
+                return "Guest in room";
+            }
+        },
     },
     methods: {
         signOut() {
@@ -57,6 +64,7 @@ const App = Vue.component("app", {
         <div>
             <ul class="header-menu">
                 <template v-if="loggedIn">
+                    <li>{{ ownerOrGuest }}</li>
                     <li>{{ idTokenDecoded.sub }}</li>
                     <li>{{ idTokenDecoded.email }}</li>
                     <li>{{ idTokenDecoded.name }}</li>
