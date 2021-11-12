@@ -14,10 +14,8 @@ body {
   width: 100vw; }
 
 .main {
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center; }
+  max-width: 500px;
+  margin: 0 auto; }
   .main form {
     background-color: white;
     height: 20em;
@@ -87,14 +85,6 @@ body {
         font-weight: bold; }
       .chatroom #chatlog li:nth-child(odd) {
         background-color: #d2e1f1; }
-  .chatroom #username {
-    display: block;
-    position: absolute;
-    top: 0;
-    right: 0;
-    padding: 2em;
-    background: white;
-    border: 1px solid black; }
 
 .app {
   background: pink;

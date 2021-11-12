@@ -1,5 +1,3 @@
-let username = Math.random().toString(36).substring(2, 8);
-
 import ClientOAuth2 from "client-oauth2";
 import jwt_decode from "jwt-decode";
 
@@ -11,9 +9,33 @@ const oauthClient = new ClientOAuth2({
     scopes: ["openid", "name", "email"],
 });
 
+const API_URL = process.env.NODE_ENV === "development" ? process.env.VUE_APP_DATA_API_URL : "/api/v1";
+
+const ROOM_TABLE_NAMESPACE = "room_";
+
 const App = Vue.component("app", {
+    data() {
+        return {
+            idTokenDecoded: {},
+        };
+    },
+    async created() {
+        // Get user
+        const idToken = localStorage.getItem("idToken");
+        if (idToken) {
+            try {
+                this.idTokenDecoded = jwt_decode(idToken);
+                this.username = this.idTokenDecoded.name;
+                console.log("idTokenDecoded", this.idTokenDecoded);
+            } catch (error) {
+                console.log("id token decode error:", error);
+                localStorage.removeItem("idToken");
+            }
+        }
+    },
     computed: {
         loggedIn: function () {
+            // not reactive
             return localStorage.getItem("token");
         },
     },
@@ -35,51 +57,125 @@ const App = Vue.component("app", {
         </div>
         <div>
             <ul class="header-menu">
-                <li v-if="loggedIn"><button @click="signOut">Sign out</button></li>
-                <li v-else><router-link :to="{ name: 'logged-out' }">Sign in/up</router-link></li>
+                <template v-if="loggedIn">
+                    <li>{{ idTokenDecoded.sub }}</li>
+                    <li>{{ idTokenDecoded.email }}</li>
+                    <li>{{ idTokenDecoded.name }}</li>
+                    <li><button @click="signOut">Sign out</button></li>
+                </template>
+                <template v-else>
+                    <li><router-link :to="{ name: 'logged-out' }">Sign in/up</router-link></li>
+                </template>
             </ul>
         </div>
     </div>
-    <router-view />
+    <router-view :idTokenDecoded="idTokenDecoded" />
 </div>`,
 });
 
 const ChatRoom = Vue.component("chat-room", {
-    props: ["roomId"],
+    props: ["userId", "roomId", "idTokenDecoded"],
     data() {
         return {
             chats: [],
             message: "",
-            username: username,
-            handle: null,
+            handle: null, // for socket.io
         };
     },
     async created() {
-        const url = new URL(document.location.protocol + "//" + document.location.host + "/db/chats");
-        url.searchParams.append("orderBy", "ts");
-        url.searchParams.append("order", "desc");
-        url.searchParams.append("roomId", this.roomId);
-        console.log("url", url);
-        const chatsResp = await fetch(url, {
-            headers: {
-                "Content-Type": "application/json",
-                Accept: "application/json",
-            },
-        });
-        console.log("chatsResp", chatsResp);
-        const { data, handle } = await chatsResp.json();
-        this.chats = data;
-        this.handle = handle;
-        socket.on(this.handle, (msg) => {
-            this.chats.unshift(msg);
-        });
+        // const url = new URL(document.location.protocol + "//" + document.location.host + "/db/chats");
+        // url.searchParams.append("orderBy", "ts");
+        // url.searchParams.append("order", "desc");
+        // url.searchParams.append("roomId", this.roomId);
+        // console.log("url", url);
+        // const chatsResp = await fetch(url, {
+        //     headers: {
+        //         "Content-Type": "application/json",
+        //         Accept: "application/json",
+        //     },
+        // });
+        // console.log("chatsResp", chatsResp);
+        // const { data, handle } = await chatsResp.json();
+        // this.chats = data;
+        // this.handle = handle;
+        // socket.on(this.handle, (msg) => {
+        //     this.chats.unshift(msg);
+        // });
+
+        //
+        //
+        //
+        // rethink id
+
+        this.updateChats();
+
+        // end rethink id
+        //
+        //
     },
     beforeDestroy() {
         socket.off(this.handle);
     },
+    computed: {
+        roomTableName: function () {
+            return `${ROOM_TABLE_NAMESPACE}${this.roomId}`;
+        },
+    },
     methods: {
-        sendMessage() {
-            socket.emit("chats", { msg: this.message, user: this.username, roomId: this.roomId });
+        async updateChats() {
+            console.log("this.roomTableName", this.roomTableName);
+            const chatsResp = await fetch(`${API_URL}/users/${this.userId}/tables/${this.roomTableName}`, {
+                headers: {
+                    "Content-Type": "application/json",
+                    Accept: "application/json",
+                    Authorization: `Bearer ${localStorage.getItem("token")}`,
+                },
+            });
+
+            console.log("chatsResp", chatsResp);
+            console.log("chatsResp.status", chatsResp.status);
+
+            if (chatsResp.status >= 400) {
+                const errorResp = await chatsResp.json();
+                console.log("error getting chats: ", errorResp.message);
+                return;
+            }
+
+            const chats = await chatsResp.json();
+
+            console.log("chats pre sort", chats);
+
+            chats.sort(function (a, b) {
+                if (a.ts > b.ts) return -1;
+                if (a.ts < b.ts) return 1;
+                return 0;
+            });
+
+            this.chats = chats;
+        },
+        async sendMessage() {
+            const chat = {
+                ts: Date.now(),
+                msg: this.message,
+                userId: this.idTokenDecoded.sub,
+                username: this.idTokenDecoded.name,
+                roomId: this.roomId,
+            };
+            // socket.emit("chats", chat);
+
+            // Save message to RethinkDB. Add new document to this chats table.
+            const saveChat = await fetch(`${API_URL}/users/${this.userId}/tables/${this.roomTableName}`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Accept: "application/json",
+                    Authorization: `Bearer ${localStorage.getItem("token")}`,
+                },
+                body: JSON.stringify(chat),
+            });
+
+            this.updateChats();
+
             this.message = "";
         },
     },
@@ -90,13 +186,10 @@ const ChatRoom = Vue.component("chat-room", {
             <span class="timestamp">
                 {{ new Date(chat.ts).toLocaleString(undefined, {dateStyle: 'short', timeStyle: 'short'}) }}
             </span>
-            <span class="user">{{ chat.user }}:</span>
+            <span class="user">{{ chat.username }}:</span>
             <span class="msg">{{ chat.msg }}</span>
         </li>
     </ul>
-    <label id="username">Username:
-        {{ username }}
-    </label>
     <form v-on:submit.prevent="sendMessage">
         <input v-model="message" autocomplete="off" />
         <button>Send</button>
@@ -106,28 +199,78 @@ const ChatRoom = Vue.component("chat-room", {
 });
 
 const RoomView = Vue.component("room-view", {
-    template: `<chat-room :roomId="$route.params.roomId"/>`,
+    props: ["idTokenDecoded"],
+    template: `<chat-room :userId="$route.params.userId" :roomId="$route.params.roomId" :idTokenDecoded="idTokenDecoded" />`,
 });
 
 const MainView = Vue.component("main-view", {
+    props: ["idTokenDecoded"],
     data() {
         return {
             room: "lobby",
-            user: username,
+            tableNames: [],
+            userIds: "",
         };
     },
+    async created() {
+        console.log("created");
+        const tableNamesResp = await fetch(`${API_URL}/users/${this.idTokenDecoded.sub}/table-names`, {
+            headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+                Authorization: `Bearer ${localStorage.getItem("token")}`,
+            },
+        });
+
+        const tableNames = await tableNamesResp.json();
+        console.log("tableNames", tableNames);
+        this.tableNames = tableNames;
+    },
+    computed: {
+        roomIds: function () {
+            return this.tableNames
+                .filter((tableName) => tableName.startsWith(ROOM_TABLE_NAMESPACE))
+                .map((name) => name.replace(ROOM_TABLE_NAMESPACE, ""));
+        },
+    },
     methods: {
-        gotoRoom() {
-            username = this.user;
-            this.$router.push({ name: "room", params: { roomId: this.room } });
+        async createAndGoToRoom() {
+            console.log("createAndGoToRoom");
+            // create room (create table endpoint)
+            const createTableResp = await fetch(`${API_URL}/users/${this.idTokenDecoded.sub}/tables`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Accept: "application/json",
+                    Authorization: `Bearer ${localStorage.getItem("token")}`,
+                },
+                body: JSON.stringify({ table: `${ROOM_TABLE_NAMESPACE}${this.room}`, userIds: this.userIds }),
+            });
+
+            console.log("createTableResp", createTableResp);
+            console.log("createTableResp.status", createTableResp.status);
+
+            if (createTableResp.status >= 400) {
+                const errorResp = await createTableResp.json();
+                console.log("error creating room: ", errorResp.message);
+                return;
+            }
+
+            this.$router.push({ name: "room", params: { userId: this.idTokenDecoded.sub, roomId: this.room } });
         },
     },
     template: `
 <div class="main">
-    <form class="main" v-on:submit.prevent="gotoRoom">
-    <label>Username: <input v-model="user" type="text" /></label>
-    <label>Room: <input v-model="room" type="text" /></label>
-    <button>Join</button>
+    <h2>My Rooms</h2>
+    <ul>
+        <li v-for="(roomId, index) of roomIds" :key="index">
+            <router-link :to="{ name: 'room', params: { userId: idTokenDecoded.sub, roomId: roomId }}">{{ roomId }}</router-link>
+        </li>
+    </ul>
+    <form class="main" v-on:submit.prevent="createAndGoToRoom">
+    <label>Room name: <input v-model="room" type="text" /></label>
+    <label>Give access: <input v-model="userIds" type="text" placeholder="e.g. user-id-a,user-id-b" /></label>
+    <button>Create and Join Room</button>
     </form>
 </div>
     `,
@@ -273,6 +416,7 @@ const CallbackView = Vue.component("callback-view", {
             // this.$store.dispatch("fetchUser");
 
             this.$router.push({ name: "home" });
+            location.reload();
         } catch (error) {
             console.log("token decode error:", error);
         }
@@ -289,7 +433,7 @@ const CallbackView = Vue.component("callback-view", {
 
 const routes = [
     { path: "/", name: "home", component: MainView },
-    { path: "/room/:roomId", name: "room", component: RoomView },
+    { path: "/:userId/room/:roomId", name: "room", component: RoomView },
     { path: "/logged-out", name: "logged-out", component: LoggedOutView, meta: { requiresAuth: false } },
     { path: "/callback", name: "callback", component: CallbackView, meta: { requiresAuth: false } },
 ];
