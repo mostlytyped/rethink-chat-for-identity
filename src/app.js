@@ -25,7 +25,6 @@ const App = Vue.component("app", {
         if (idToken) {
             try {
                 this.idTokenDecoded = jwt_decode(idToken);
-                this.username = this.idTokenDecoded.name;
                 console.log("idTokenDecoded", this.idTokenDecoded);
             } catch (error) {
                 console.log("id token decode error:", error);
