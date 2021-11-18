@@ -1,6 +1,8 @@
 import ClientOAuth2 from "client-oauth2";
 import jwt_decode from "jwt-decode";
 
+import socket from "./socket";
+
 const oauthClient = new ClientOAuth2({
     clientId: process.env.VUE_APP_OAUTH_CLIENT_ID,
     accessTokenUri: process.env.VUE_APP_OAUTH_TOKEN_URI,
@@ -8,8 +10,6 @@ const oauthClient = new ClientOAuth2({
     redirectUri: process.env.VUE_APP_OAUTH_REDIRECT_URI,
     scopes: ["openid", "name", "email"],
 });
-
-const API_URL = process.env.NODE_ENV === "development" ? process.env.VUE_APP_DATA_API_URL : "/api/v1";
 
 const ROOM_TABLE_NAMESPACE = "room_";
 
@@ -79,45 +79,14 @@ const ChatRoom = Vue.component("chat-room", {
             chats: [],
             message: "",
             handle: null, // for socket.io
-            userIdsWithAccess: [],
-            userIdsWithAccessStr: "",
+            userIdsWithPermission: [],
+            userIdsWithPermissionStr: "",
             hasAccess: true,
         };
     },
     async created() {
-        // const url = new URL(document.location.protocol + "//" + document.location.host + "/db/chats");
-        // url.searchParams.append("orderBy", "ts");
-        // url.searchParams.append("order", "desc");
-        // url.searchParams.append("roomId", this.roomId);
-        // console.log("url", url);
-        // const chatsResp = await fetch(url, {
-        //     headers: {
-        //         "Content-Type": "application/json",
-        //         Accept: "application/json",
-        //     },
-        // });
-        // console.log("chatsResp", chatsResp);
-        // const { data, handle } = await chatsResp.json();
-        // this.chats = data;
-        // this.handle = handle;
-        // socket.on(this.handle, (msg) => {
-        //     this.chats.unshift(msg);
-        // });
-
-        //
-        //
-        //
-        // rethink id
-
         this.fetchChats();
         this.fetchPermissions();
-
-        // end rethink id
-        //
-        //
-    },
-    beforeDestroy() {
-        socket.off(this.handle);
     },
     computed: {
         roomTableName: function () {
@@ -129,57 +98,36 @@ const ChatRoom = Vue.component("chat-room", {
     },
     methods: {
         async fetchChats() {
-            const chatsResp = await fetch(`${API_URL}/users/${this.userId}/tables/${this.roomTableName}`, {
-                headers: {
-                    "Content-Type": "application/json",
-                    Accept: "application/json",
-                    Authorization: `Bearer ${localStorage.getItem("token")}`,
-                },
+            const payload = { tableName: this.roomTableName, tableUserId: this.userId };
+            socket.emit("table:read", payload, (response) => {
+                console.log("table:read:", response);
+                if (response.error) {
+                    this.hasAccess = false;
+                    return;
+                }
+                const chats = response;
+
+                chats.sort(function (a, b) {
+                    if (a.ts > b.ts) return -1;
+                    if (a.ts < b.ts) return 1;
+                    return 0;
+                });
+
+                this.chats = chats;
             });
-
-            if (chatsResp.status >= 400) {
-                const errorResp = await chatsResp.json();
-                console.log("error getting chats: ", errorResp.message);
-                this.hasAccess = false;
-                return;
-            }
-
-            const chats = await chatsResp.json();
-
-            chats.sort(function (a, b) {
-                if (a.ts > b.ts) return -1;
-                if (a.ts < b.ts) return 1;
-                return 0;
-            });
-
-            this.chats = chats;
         },
         async fetchPermissions() {
             if (!this.isOwner) {
                 return;
             }
 
-            const permissionsResp = await fetch(
-                `${API_URL}/users/${this.userId}/tables/${this.roomTableName}/permissions`,
-                {
-                    headers: {
-                        "Content-Type": "application/json",
-                        Accept: "application/json",
-                        Authorization: `Bearer ${localStorage.getItem("token")}`,
-                    },
-                },
-            );
-
-            if (permissionsResp.status >= 400) {
-                const errorResp = await permissionsResp.json();
-                console.log("error getting permissions: ", errorResp.message);
-                return;
-            }
-
-            this.userIdsWithAccess = await permissionsResp.json();
-            console.log("this.userIdsWithAccess", this.userIdsWithAccess);
-
-            this.userIdsWithAccessStr = this.userIdsWithAccess.join(",");
+            const payload = { userId: this.userId, tableName: this.roomTableName };
+            socket.emit("table-permissions:read", payload, (response) => {
+                if (!response.error) {
+                    this.userIdsWithPermission = response;
+                    this.userIdsWithPermissionStr = this.userIdsWithPermission.join(",");
+                }
+            });
         },
         async sendMessage() {
             const chat = {
@@ -189,35 +137,26 @@ const ChatRoom = Vue.component("chat-room", {
                 username: this.idTokenDecoded.name,
                 roomId: this.roomId,
             };
-            // socket.emit("chats", chat);
 
-            // Save message to RethinkDB. Add new document to this chats table.
-            const saveChat = await fetch(`${API_URL}/users/${this.userId}/tables/${this.roomTableName}`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Accept: "application/json",
-                    Authorization: `Bearer ${localStorage.getItem("token")}`,
-                },
-                body: JSON.stringify(chat),
+            const payload = { userId: this.userId, tableName: this.roomTableName, row: chat };
+            socket.emit("table:row:create", payload, (response) => {
+                if (!response.error) {
+                    this.fetchChats();
+                    this.message = "";
+                }
             });
-
-            this.fetchChats();
-
-            this.message = "";
         },
         async updatePermissions() {
-            console.log("update permissions");
-            await fetch(`${API_URL}/users/${this.userId}/tables/${this.roomTableName}/permissions`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Accept: "application/json",
-                    Authorization: `Bearer ${localStorage.getItem("token")}`,
-                },
-                body: JSON.stringify({ userIds: this.userIdsWithAccessStr }),
+            const payload = {
+                userId: this.userId,
+                tableName: this.roomTableName,
+                userIds: this.userIdsWithPermissionStr,
+            };
+            socket.emit("table-permissions:update", payload, (response) => {
+                if (!response.error) {
+                    this.fetchPermissions();
+                }
             });
-            this.fetchPermissions();
         },
     },
     template: `
@@ -241,12 +180,12 @@ const ChatRoom = Vue.component("chat-room", {
         <template v-if="isOwner">
             <h3>User IDs with Access</h3>
             <ul>
-                <li v-for="(userId, index) of userIdsWithAccess" :key.id="index">
+                <li v-for="(userId, index) of userIdsWithPermission" :key.id="index">
                     {{ userId }}
                 </li>
             </ul>
             <form v-on:submit.prevent="updatePermissions">
-                <input type="text" v-model="userIdsWithAccessStr" />
+                <input type="text" v-model="userIdsWithPermissionStr" />
                 <button>Update</button>
             </form>
         </template>
@@ -274,18 +213,12 @@ const MainView = Vue.component("main-view", {
         };
     },
     async created() {
-        console.log("created");
-        const tableNamesResp = await fetch(`${API_URL}/users/${this.idTokenDecoded.sub}/table-names`, {
-            headers: {
-                "Content-Type": "application/json",
-                Accept: "application/json",
-                Authorization: `Bearer ${localStorage.getItem("token")}`,
-            },
+        const payload = { userId: this.idTokenDecoded.sub };
+        socket.emit("table-names:read", payload, (response) => {
+            if (!response.error) {
+                this.tableNames = response;
+            }
         });
-
-        const tableNames = await tableNamesResp.json();
-        console.log("tableNames", tableNames);
-        this.tableNames = tableNames;
     },
     computed: {
         roomIds: function () {
@@ -296,28 +229,14 @@ const MainView = Vue.component("main-view", {
     },
     methods: {
         async createAndGoToRoom() {
-            console.log("createAndGoToRoom");
-            // create room (create table endpoint)
-            const createTableResp = await fetch(`${API_URL}/users/${this.idTokenDecoded.sub}/tables`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Accept: "application/json",
-                    Authorization: `Bearer ${localStorage.getItem("token")}`,
-                },
-                body: JSON.stringify({ table: `${ROOM_TABLE_NAMESPACE}${this.room}`, userIds: this.userIds }),
+            const payload = {
+                userId: this.idTokenDecoded.sub,
+                tableName: `${ROOM_TABLE_NAMESPACE}${this.room}`,
+                userIds: this.userIds,
+            };
+            socket.emit("table:create", payload, (response) => {
+                this.$router.push({ name: "room", params: { userId: this.idTokenDecoded.sub, roomId: this.room } });
             });
-
-            console.log("createTableResp", createTableResp);
-            console.log("createTableResp.status", createTableResp.status);
-
-            if (createTableResp.status >= 400) {
-                const errorResp = await createTableResp.json();
-                console.log("error creating room: ", errorResp.message);
-                return;
-            }
-
-            this.$router.push({ name: "room", params: { userId: this.idTokenDecoded.sub, roomId: this.room } });
         },
     },
     template: `
@@ -467,6 +386,10 @@ const CallbackView = Vue.component("callback-view", {
         localStorage.setItem("token", token);
         localStorage.setItem("idToken", idToken);
 
+        socket.auth = {
+            token: localStorage.getItem("token"),
+        };
+
         try {
             const tokenDecoded = jwt_decode(token);
             const idTokenDecoded = jwt_decode(idToken);
@@ -515,8 +438,6 @@ router.beforeEach((to, from, next) => {
 
     next();
 });
-
-var socket = io();
 
 new Vue({
     router,
