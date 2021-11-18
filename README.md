@@ -5,9 +5,7 @@
 Create a `.env` file. Use `example.env` as a reference.
 
 ```bash
-rethinkdb --http-port 5001
-node migrate.js
-node index.js
-npm run build-watch # build app.js, the Vue app
+npm run serve # start the Express server static files
+npm run build-watch # use Webpack to build app.js, the Vue app
 sass --watch public/css:public/css
 ```
