@@ -11,7 +11,7 @@ const oauthClient = new ClientOAuth2({
     scopes: ["openid", "name", "email"],
 });
 
-const ROOM_TABLE_NAMESPACE = "room_";
+const ROOM_TABLE_NAMESPACE = "room";
 
 const App = Vue.component("app", {
     data() {
@@ -78,19 +78,22 @@ const ChatRoom = Vue.component("chat-room", {
         return {
             chats: [],
             message: "",
-            handle: null, // for socket.io
             userIdsWithPermission: [],
             userIdsWithPermissionStr: "",
             hasAccess: true,
+            socketRoomHandle: "", // <table user id>_<table name>
         };
     },
     async created() {
         this.fetchChats();
         this.fetchPermissions();
     },
+    beforeDestroy() {
+        socket.off(this.socketRoomHandle);
+    },
     computed: {
         roomTableName: function () {
-            return `${ROOM_TABLE_NAMESPACE}${this.roomId}`;
+            return `${ROOM_TABLE_NAMESPACE}_${this.roomId}`;
         },
         isOwner: function () {
             return this.idTokenDecoded.sub === this.$route.params.userId;
@@ -105,15 +108,20 @@ const ChatRoom = Vue.component("chat-room", {
                     this.hasAccess = false;
                     return;
                 }
-                const chats = response;
+                const { data, socketTableHandle } = response;
 
-                chats.sort(function (a, b) {
+                data.sort(function (a, b) {
                     if (a.ts > b.ts) return -1;
                     if (a.ts < b.ts) return 1;
                     return 0;
                 });
 
-                this.chats = chats;
+                this.chats = data;
+                this.socketRoomHandle = socketTableHandle;
+
+                socket.on(this.socketRoomHandle, (msg) => {
+                    this.chats.unshift(msg);
+                });
             });
         },
         async fetchPermissions() {
@@ -141,7 +149,6 @@ const ChatRoom = Vue.component("chat-room", {
             const payload = { userId: this.userId, tableName: this.roomTableName, row: chat };
             socket.emit("table:row:create", payload, (response) => {
                 if (!response.error) {
-                    this.fetchChats();
                     this.message = "";
                 }
             });
@@ -231,7 +238,7 @@ const MainView = Vue.component("main-view", {
         async createAndGoToRoom() {
             const payload = {
                 userId: this.idTokenDecoded.sub,
-                tableName: `${ROOM_TABLE_NAMESPACE}${this.room}`,
+                tableName: `${ROOM_TABLE_NAMESPACE}_${this.room}`,
                 userIds: this.userIds,
             };
             socket.emit("table:create", payload, (response) => {
