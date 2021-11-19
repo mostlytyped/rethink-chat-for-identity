@@ -229,9 +229,10 @@ const MainView = Vue.component("main-view", {
     },
     computed: {
         roomIds: function () {
+            const prefix = `${ROOM_TABLE_NAMESPACE}_`;
             return this.tableNames
-                .filter((tableName) => tableName.startsWith(ROOM_TABLE_NAMESPACE))
-                .map((name) => name.replace(ROOM_TABLE_NAMESPACE, ""));
+                .filter((tableName) => tableName.startsWith(prefix))
+                .map((name) => name.replace(prefix, ""));
         },
     },
     methods: {
