@@ -78,13 +78,20 @@ const ChatRoom = Vue.component("chat-room", {
         return {
             chats: [],
             message: "",
-            userIdsWithPermission: [],
-            userIdsWithPermissionStr: "",
+            initialPermission: {
+                userId: "",
+                create: false,
+                read: false,
+                update: false,
+                delete: false,
+            },
+            permissions: [],
             hasAccess: true,
             socketRoomHandle: "", // <table user id>_<table name>
         };
     },
     async created() {
+        this.addUser();
         this.fetchChats();
         this.fetchPermissions();
     },
@@ -132,8 +139,7 @@ const ChatRoom = Vue.component("chat-room", {
             const payload = { userId: this.userId, tableName: this.roomTableName };
             socket.emit("table-permissions:read", payload, (response) => {
                 if (!response.error) {
-                    this.userIdsWithPermission = response;
-                    this.userIdsWithPermissionStr = this.userIdsWithPermission.join(",");
+                    this.permissions = response;
                 }
             });
         },
@@ -157,13 +163,16 @@ const ChatRoom = Vue.component("chat-room", {
             const payload = {
                 userId: this.userId,
                 tableName: this.roomTableName,
-                userIds: this.userIdsWithPermissionStr,
+                permissions: this.permissions,
             };
             socket.emit("table-permissions:update", payload, (response) => {
                 if (!response.error) {
                     this.fetchPermissions();
                 }
             });
+        },
+        addUser() {
+            this.permissions.push(Object.assign({}, this.initialPermission));
         },
     },
     template: `
@@ -186,15 +195,30 @@ const ChatRoom = Vue.component("chat-room", {
     <div class="chat-permissions">
         <template v-if="isOwner">
             <h3>User IDs with Access</h3>
-            <ul>
-                <li v-for="(userId, index) of userIdsWithPermission" :key.id="index">
-                    {{ userId }}
-                </li>
-            </ul>
             <form v-on:submit.prevent="updatePermissions">
-                <input type="text" v-model="userIdsWithPermissionStr" />
+                <div v-for="(p, index) of permissions" :key="index">
+                    <input type="text" v-model="permissions[index].userId" />
+                    
+                    <div>
+                        <input type="checkbox" :id="'permissions-' + index + '-create'" value="true" v-model="permissions[index].create">
+                        <label :for="'permissions-' + index + '-create'">Create</label>
+                    </div>
+                    <div>
+                        <input type="checkbox" :id="'permissions-' + index + '-read'" value="true" v-model="permissions[index].read">
+                        <label :for="'permissions-' + index + '-read'">Read</label>
+                    </div>
+                    <div>
+                        <input type="checkbox" :id="'permissions-' + index + '-update'" value="true" v-model="permissions[index].update">
+                        <label :for="'permissions-' + index + '-update'">Update</label>
+                    </div>
+                    <div>
+                        <input type="checkbox" :id="'permissions-' + index + '-delete'" value="true" v-model="permissions[index].delete">
+                        <label :for="'permissions-' + index + '-delete'">Delete</label>
+                    </div>
+                </div>
                 <button>Update</button>
             </form>
+            <div><button @click="addUser">Add user</button></div>
         </template>
         <template v-else>
             <p>You are a guest in this room.</p>
@@ -216,10 +240,19 @@ const MainView = Vue.component("main-view", {
         return {
             room: "lobby",
             tableNames: [],
-            userIds: "",
+            initialPermission: {
+                userId: "",
+                create: false,
+                read: false,
+                update: false,
+                delete: false,
+            },
+            permissions: [],
         };
     },
     async created() {
+        this.addUser();
+
         const payload = { userId: this.idTokenDecoded.sub };
         socket.emit("table-names:read", payload, (response) => {
             if (!response.error) {
@@ -240,11 +273,14 @@ const MainView = Vue.component("main-view", {
             const payload = {
                 userId: this.idTokenDecoded.sub,
                 tableName: `${ROOM_TABLE_NAMESPACE}_${this.room}`,
-                userIds: this.userIds,
+                permissions: this.permissions,
             };
             socket.emit("table:create", payload, (response) => {
                 this.$router.push({ name: "room", params: { userId: this.idTokenDecoded.sub, roomId: this.room } });
             });
+        },
+        addUser() {
+            this.permissions.push(Object.assign({}, this.initialPermission));
         },
     },
     template: `
@@ -255,10 +291,31 @@ const MainView = Vue.component("main-view", {
             <router-link :to="{ name: 'room', params: { userId: idTokenDecoded.sub, roomId: roomId }}">{{ roomId }}</router-link>
         </li>
     </ul>
-    <form class="main" v-on:submit.prevent="createAndGoToRoom">
-    <label>Room name: <input v-model="room" type="text" /></label>
-    <label>Give access: <input v-model="userIds" type="text" placeholder="e.g. user-id-a,user-id-b" /></label>
-    <button>Create and Join Room</button>
+    <form class="create-room-form" v-on:submit.prevent="createAndGoToRoom">
+        <label>Room name: <input v-model="room" type="text" /></label>
+        <div>Give access:</div>
+        <div v-for="(p, index) of permissions" :key="index">
+            <label>User ID:<input type="text" v-model="permissions[index].userId" /></label>
+            
+            <div>
+                <input type="checkbox" :id="'permissions-' + index + '-create'" value="true" v-model="permissions[index].create">
+                <label :for="'permissions-' + index + '-create'">Create</label>
+            </div>
+            <div>
+                <input type="checkbox" :id="'permissions-' + index + '-read'" value="true" v-model="permissions[index].read">
+                <label :for="'permissions-' + index + '-read'">Read</label>
+            </div>
+            <div>
+                <input type="checkbox" :id="'permissions-' + index + '-update'" value="true" v-model="permissions[index].update">
+                <label :for="'permissions-' + index + '-update'">Update</label>
+            </div>
+            <div>
+                <input type="checkbox" :id="'permissions-' + index + '-delete'" value="true" v-model="permissions[index].delete">
+                <label :for="'permissions-' + index + '-delete'">Delete</label>
+            </div>
+        </div>
+        <button type="submit">Create and Join Room</button>
+        <div><button type="button" @click="addUser">Add user</button></div>
     </form>
 </div>
     `,
