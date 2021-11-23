@@ -276,7 +276,11 @@ const MainView = Vue.component("main-view", {
                 permissions: this.permissions,
             };
             socket.emit("table:create", payload, (response) => {
-                this.$router.push({ name: "room", params: { userId: this.idTokenDecoded.sub, roomId: this.room } });
+                if (response.error) {
+                    console.log("table:create error", response.error);
+                } else {
+                    this.$router.push({ name: "room", params: { userId: this.idTokenDecoded.sub, roomId: this.room } });
+                }
             });
         },
         addUser() {
