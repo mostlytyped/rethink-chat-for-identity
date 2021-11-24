@@ -4,7 +4,8 @@
     "description": "my first socket.io app",
     "scripts": {
         "build": "webpack",
-        "build-watch": "webpack --watch"
+        "build-watch": "webpack --watch",
+        "serve": "node index.js"
     },
     "dependencies": {
         "client-oauth2": "^4.3.3",
@@ -12,9 +13,7 @@
         "dotenv": "^10.0.0",
         "express": "^4.17.1",
         "jwt-decode": "^3.1.2",
-        "morgan": "^1.10.0",
-        "rethinkdb": "^2.4.2",
-        "socket.io": "^2.3.0"
+        "socket.io-client": "^4.3.2"
     },
     "devDependencies": {
         "path": "^0.12.7",

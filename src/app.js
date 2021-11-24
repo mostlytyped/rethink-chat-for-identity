@@ -1,6 +1,8 @@
 import ClientOAuth2 from "client-oauth2";
 import jwt_decode from "jwt-decode";
 
+import socket from "./socket";
+
 const oauthClient = new ClientOAuth2({
     clientId: process.env.VUE_APP_OAUTH_CLIENT_ID,
     accessTokenUri: process.env.VUE_APP_OAUTH_TOKEN_URI,
@@ -9,9 +11,7 @@ const oauthClient = new ClientOAuth2({
     scopes: ["openid", "name", "email"],
 });
 
-const API_URL = process.env.NODE_ENV === "development" ? process.env.VUE_APP_DATA_API_URL : "/api/v1";
-
-const ROOM_TABLE_NAMESPACE = "room_";
+const ROOM_TABLE_NAMESPACE = "room";
 
 const App = Vue.component("app", {
     data() {
@@ -78,50 +78,29 @@ const ChatRoom = Vue.component("chat-room", {
         return {
             chats: [],
             message: "",
-            handle: null, // for socket.io
-            userIdsWithAccess: [],
-            userIdsWithAccessStr: "",
+            initialPermission: {
+                userId: "",
+                create: false,
+                read: false,
+                update: false,
+                delete: false,
+            },
+            permissions: [],
             hasAccess: true,
+            socketRoomHandle: "", // <table user id>_<table name>
         };
     },
     async created() {
-        // const url = new URL(document.location.protocol + "//" + document.location.host + "/db/chats");
-        // url.searchParams.append("orderBy", "ts");
-        // url.searchParams.append("order", "desc");
-        // url.searchParams.append("roomId", this.roomId);
-        // console.log("url", url);
-        // const chatsResp = await fetch(url, {
-        //     headers: {
-        //         "Content-Type": "application/json",
-        //         Accept: "application/json",
-        //     },
-        // });
-        // console.log("chatsResp", chatsResp);
-        // const { data, handle } = await chatsResp.json();
-        // this.chats = data;
-        // this.handle = handle;
-        // socket.on(this.handle, (msg) => {
-        //     this.chats.unshift(msg);
-        // });
-
-        //
-        //
-        //
-        // rethink id
-
+        this.addUser();
         this.fetchChats();
         this.fetchPermissions();
-
-        // end rethink id
-        //
-        //
     },
     beforeDestroy() {
-        socket.off(this.handle);
+        socket.off(this.socketRoomHandle);
     },
     computed: {
         roomTableName: function () {
-            return `${ROOM_TABLE_NAMESPACE}${this.roomId}`;
+            return `${ROOM_TABLE_NAMESPACE}_${this.roomId}`;
         },
         isOwner: function () {
             return this.idTokenDecoded.sub === this.$route.params.userId;
@@ -129,57 +108,40 @@ const ChatRoom = Vue.component("chat-room", {
     },
     methods: {
         async fetchChats() {
-            const chatsResp = await fetch(`${API_URL}/users/${this.userId}/tables/${this.roomTableName}`, {
-                headers: {
-                    "Content-Type": "application/json",
-                    Accept: "application/json",
-                    Authorization: `Bearer ${localStorage.getItem("token")}`,
-                },
+            const payload = { tableName: this.roomTableName, tableUserId: this.userId };
+            socket.emit("table:read", payload, (response) => {
+                console.log("table:read:", response);
+                if (response.error) {
+                    this.hasAccess = false;
+                    return;
+                }
+                const { data, socketTableHandle } = response;
+
+                data.sort(function (a, b) {
+                    if (a.ts > b.ts) return -1;
+                    if (a.ts < b.ts) return 1;
+                    return 0;
+                });
+
+                this.chats = data;
+                this.socketRoomHandle = socketTableHandle;
+
+                socket.on(this.socketRoomHandle, (msg) => {
+                    this.chats.unshift(msg);
+                });
             });
-
-            if (chatsResp.status >= 400) {
-                const errorResp = await chatsResp.json();
-                console.log("error getting chats: ", errorResp.message);
-                this.hasAccess = false;
-                return;
-            }
-
-            const chats = await chatsResp.json();
-
-            chats.sort(function (a, b) {
-                if (a.ts > b.ts) return -1;
-                if (a.ts < b.ts) return 1;
-                return 0;
-            });
-
-            this.chats = chats;
         },
         async fetchPermissions() {
             if (!this.isOwner) {
                 return;
             }
 
-            const permissionsResp = await fetch(
-                `${API_URL}/users/${this.userId}/tables/${this.roomTableName}/permissions`,
-                {
-                    headers: {
-                        "Content-Type": "application/json",
-                        Accept: "application/json",
-                        Authorization: `Bearer ${localStorage.getItem("token")}`,
-                    },
-                },
-            );
-
-            if (permissionsResp.status >= 400) {
-                const errorResp = await permissionsResp.json();
-                console.log("error getting permissions: ", errorResp.message);
-                return;
-            }
-
-            this.userIdsWithAccess = await permissionsResp.json();
-            console.log("this.userIdsWithAccess", this.userIdsWithAccess);
-
-            this.userIdsWithAccessStr = this.userIdsWithAccess.join(",");
+            const payload = { userId: this.userId, tableName: this.roomTableName };
+            socket.emit("table-permissions:read", payload, (response) => {
+                if (!response.error) {
+                    this.permissions = response;
+                }
+            });
         },
         async sendMessage() {
             const chat = {
@@ -189,35 +151,28 @@ const ChatRoom = Vue.component("chat-room", {
                 username: this.idTokenDecoded.name,
                 roomId: this.roomId,
             };
-            // socket.emit("chats", chat);
 
-            // Save message to RethinkDB. Add new document to this chats table.
-            const saveChat = await fetch(`${API_URL}/users/${this.userId}/tables/${this.roomTableName}`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Accept: "application/json",
-                    Authorization: `Bearer ${localStorage.getItem("token")}`,
-                },
-                body: JSON.stringify(chat),
+            const payload = { userId: this.userId, tableName: this.roomTableName, row: chat };
+            socket.emit("table:row:create", payload, (response) => {
+                if (!response.error) {
+                    this.message = "";
+                }
             });
-
-            this.fetchChats();
-
-            this.message = "";
         },
         async updatePermissions() {
-            console.log("update permissions");
-            await fetch(`${API_URL}/users/${this.userId}/tables/${this.roomTableName}/permissions`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Accept: "application/json",
-                    Authorization: `Bearer ${localStorage.getItem("token")}`,
-                },
-                body: JSON.stringify({ userIds: this.userIdsWithAccessStr }),
+            const payload = {
+                userId: this.userId,
+                tableName: this.roomTableName,
+                permissions: this.permissions,
+            };
+            socket.emit("table-permissions:update", payload, (response) => {
+                if (!response.error) {
+                    this.fetchPermissions();
+                }
             });
-            this.fetchPermissions();
+        },
+        addUser() {
+            this.permissions.push(Object.assign({}, this.initialPermission));
         },
     },
     template: `
@@ -240,15 +195,30 @@ const ChatRoom = Vue.component("chat-room", {
     <div class="chat-permissions">
         <template v-if="isOwner">
             <h3>User IDs with Access</h3>
-            <ul>
-                <li v-for="(userId, index) of userIdsWithAccess" :key.id="index">
-                    {{ userId }}
-                </li>
-            </ul>
             <form v-on:submit.prevent="updatePermissions">
-                <input type="text" v-model="userIdsWithAccessStr" />
+                <div v-for="(p, index) of permissions" :key="index">
+                    <input type="text" v-model="permissions[index].userId" />
+                    
+                    <div>
+                        <input type="checkbox" :id="'permissions-' + index + '-create'" value="true" v-model="permissions[index].create">
+                        <label :for="'permissions-' + index + '-create'">Create</label>
+                    </div>
+                    <div>
+                        <input type="checkbox" :id="'permissions-' + index + '-read'" value="true" v-model="permissions[index].read">
+                        <label :for="'permissions-' + index + '-read'">Read</label>
+                    </div>
+                    <div>
+                        <input type="checkbox" :id="'permissions-' + index + '-update'" value="true" v-model="permissions[index].update">
+                        <label :for="'permissions-' + index + '-update'">Update</label>
+                    </div>
+                    <div>
+                        <input type="checkbox" :id="'permissions-' + index + '-delete'" value="true" v-model="permissions[index].delete">
+                        <label :for="'permissions-' + index + '-delete'">Delete</label>
+                    </div>
+                </div>
                 <button>Update</button>
             </form>
+            <div><button @click="addUser">Add user</button></div>
         </template>
         <template v-else>
             <p>You are a guest in this room.</p>
@@ -270,54 +240,51 @@ const MainView = Vue.component("main-view", {
         return {
             room: "lobby",
             tableNames: [],
-            userIds: "",
+            initialPermission: {
+                userId: "",
+                create: false,
+                read: false,
+                update: false,
+                delete: false,
+            },
+            permissions: [],
         };
     },
     async created() {
-        console.log("created");
-        const tableNamesResp = await fetch(`${API_URL}/users/${this.idTokenDecoded.sub}/table-names`, {
-            headers: {
-                "Content-Type": "application/json",
-                Accept: "application/json",
-                Authorization: `Bearer ${localStorage.getItem("token")}`,
-            },
-        });
+        this.addUser();
 
-        const tableNames = await tableNamesResp.json();
-        console.log("tableNames", tableNames);
-        this.tableNames = tableNames;
+        const payload = { userId: this.idTokenDecoded.sub };
+        socket.emit("table-names:read", payload, (response) => {
+            if (!response.error) {
+                this.tableNames = response;
+            }
+        });
     },
     computed: {
         roomIds: function () {
+            const prefix = `${ROOM_TABLE_NAMESPACE}_`;
             return this.tableNames
-                .filter((tableName) => tableName.startsWith(ROOM_TABLE_NAMESPACE))
-                .map((name) => name.replace(ROOM_TABLE_NAMESPACE, ""));
+                .filter((tableName) => tableName.startsWith(prefix))
+                .map((name) => name.replace(prefix, ""));
         },
     },
     methods: {
         async createAndGoToRoom() {
-            console.log("createAndGoToRoom");
-            // create room (create table endpoint)
-            const createTableResp = await fetch(`${API_URL}/users/${this.idTokenDecoded.sub}/tables`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Accept: "application/json",
-                    Authorization: `Bearer ${localStorage.getItem("token")}`,
-                },
-                body: JSON.stringify({ table: `${ROOM_TABLE_NAMESPACE}${this.room}`, userIds: this.userIds }),
+            const payload = {
+                userId: this.idTokenDecoded.sub,
+                tableName: `${ROOM_TABLE_NAMESPACE}_${this.room}`,
+                permissions: this.permissions,
+            };
+            socket.emit("table:create", payload, (response) => {
+                if (response.error) {
+                    console.log("table:create error", response.error);
+                } else {
+                    this.$router.push({ name: "room", params: { userId: this.idTokenDecoded.sub, roomId: this.room } });
+                }
             });
-
-            console.log("createTableResp", createTableResp);
-            console.log("createTableResp.status", createTableResp.status);
-
-            if (createTableResp.status >= 400) {
-                const errorResp = await createTableResp.json();
-                console.log("error creating room: ", errorResp.message);
-                return;
-            }
-
-            this.$router.push({ name: "room", params: { userId: this.idTokenDecoded.sub, roomId: this.room } });
+        },
+        addUser() {
+            this.permissions.push(Object.assign({}, this.initialPermission));
         },
     },
     template: `
@@ -328,10 +295,31 @@ const MainView = Vue.component("main-view", {
             <router-link :to="{ name: 'room', params: { userId: idTokenDecoded.sub, roomId: roomId }}">{{ roomId }}</router-link>
         </li>
     </ul>
-    <form class="main" v-on:submit.prevent="createAndGoToRoom">
-    <label>Room name: <input v-model="room" type="text" /></label>
-    <label>Give access: <input v-model="userIds" type="text" placeholder="e.g. user-id-a,user-id-b" /></label>
-    <button>Create and Join Room</button>
+    <form class="create-room-form" v-on:submit.prevent="createAndGoToRoom">
+        <label>Room name: <input v-model="room" type="text" /></label>
+        <div>Give access:</div>
+        <div v-for="(p, index) of permissions" :key="index">
+            <label>User ID:<input type="text" v-model="permissions[index].userId" /></label>
+            
+            <div>
+                <input type="checkbox" :id="'permissions-' + index + '-create'" value="true" v-model="permissions[index].create">
+                <label :for="'permissions-' + index + '-create'">Create</label>
+            </div>
+            <div>
+                <input type="checkbox" :id="'permissions-' + index + '-read'" value="true" v-model="permissions[index].read">
+                <label :for="'permissions-' + index + '-read'">Read</label>
+            </div>
+            <div>
+                <input type="checkbox" :id="'permissions-' + index + '-update'" value="true" v-model="permissions[index].update">
+                <label :for="'permissions-' + index + '-update'">Update</label>
+            </div>
+            <div>
+                <input type="checkbox" :id="'permissions-' + index + '-delete'" value="true" v-model="permissions[index].delete">
+                <label :for="'permissions-' + index + '-delete'">Delete</label>
+            </div>
+        </div>
+        <button type="submit">Create and Join Room</button>
+        <div><button type="button" @click="addUser">Add user</button></div>
     </form>
 </div>
     `,
@@ -467,6 +455,10 @@ const CallbackView = Vue.component("callback-view", {
         localStorage.setItem("token", token);
         localStorage.setItem("idToken", idToken);
 
+        socket.auth = {
+            token: localStorage.getItem("token"),
+        };
+
         try {
             const tokenDecoded = jwt_decode(token);
             const idTokenDecoded = jwt_decode(idToken);
@@ -515,8 +507,6 @@ router.beforeEach((to, from, next) => {
 
     next();
 });
-
-var socket = io();
 
 new Vue({
     router,
