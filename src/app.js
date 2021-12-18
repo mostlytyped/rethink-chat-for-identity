@@ -80,7 +80,7 @@ const ChatRoom = Vue.component("chat-room", {
             message: "",
             initialPermission: {
                 userId: "",
-                create: false,
+                insert: false,
                 read: false,
                 update: false,
                 delete: false,
@@ -94,6 +94,7 @@ const ChatRoom = Vue.component("chat-room", {
         this.addUser();
         this.fetchChats();
         this.fetchPermissions();
+        this.subscribe();
     },
     beforeDestroy() {
         socket.off(this.socketRoomHandle);
@@ -115,7 +116,7 @@ const ChatRoom = Vue.component("chat-room", {
                     this.hasAccess = false;
                     return;
                 }
-                const { data, socketTableHandle } = response;
+                const { data } = response;
 
                 data.sort(function (a, b) {
                     if (a.ts > b.ts) return -1;
@@ -124,11 +125,30 @@ const ChatRoom = Vue.component("chat-room", {
                 });
 
                 this.chats = data;
-                this.socketRoomHandle = socketTableHandle;
+            });
+        },
+        subscribe() {
+            const payload = { userId: this.$route.params.userId, tableName: this.roomTableName };
+            socket.emit("table:subscribe", payload, (response) => {
+                console.log("Let's subscribe", response);
 
-                socket.on(this.socketRoomHandle, (msg) => {
-                    this.chats.unshift(msg);
-                });
+                if (response.error) {
+                    console.log("subscribe error", response.error);
+                } else {
+                    const socketTableHandle = response.data;
+
+                    if (socketTableHandle) {
+                        console.log("We have a socket handle");
+                        this.socketRoomHandle = socketTableHandle;
+
+                        socket.on(this.socketRoomHandle, (msg) => {
+                            console.log("Received emitted msg", msg);
+                            this.chats.unshift(msg);
+                        });
+                    } else {
+                        console.log("We do not have a socket handle");
+                    }
+                }
             });
         },
         async fetchPermissions() {
@@ -136,10 +156,11 @@ const ChatRoom = Vue.component("chat-room", {
                 return;
             }
 
-            const payload = { userId: this.userId, tableName: this.roomTableName };
-            socket.emit("table-permissions:read", payload, (response) => {
+            const payload = { tableName: this.roomTableName };
+            socket.emit("permissions:read", payload, (response) => {
+                console.log("permissions:read response", response);
                 if (!response.error) {
-                    this.permissions = response;
+                    this.permissions = response.data;
                 }
             });
         },
@@ -153,19 +174,21 @@ const ChatRoom = Vue.component("chat-room", {
             };
 
             const payload = { userId: this.userId, tableName: this.roomTableName, row: chat };
-            socket.emit("table:row:create", payload, (response) => {
+            socket.emit("table:insert", payload, (response) => {
                 if (!response.error) {
                     this.message = "";
                 }
             });
         },
         async updatePermissions() {
+            // Do not include empty permissions
+            const permissions = this.permissions.filter((permission) => permission.userId !== "");
+
             const payload = {
-                userId: this.userId,
                 tableName: this.roomTableName,
-                permissions: this.permissions,
+                permissions,
             };
-            socket.emit("table-permissions:update", payload, (response) => {
+            socket.emit("permissions:update", payload, (response) => {
                 if (!response.error) {
                     this.fetchPermissions();
                 }
@@ -187,21 +210,21 @@ const ChatRoom = Vue.component("chat-room", {
                 <span class="msg">{{ chat.msg }}</span>
             </li>
         </ul>
-        <form v-on:submit.prevent="sendMessage">
+        <form class="message-form" v-on:submit.prevent="sendMessage">
             <input v-model="message" autocomplete="off" />
             <button>Send</button>
         </form>
     </div>
     <div class="chat-permissions">
         <template v-if="isOwner">
-            <h3>User IDs with Access</h3>
+            <h3>Permissions</h3>
             <form v-on:submit.prevent="updatePermissions">
-                <div v-for="(p, index) of permissions" :key="index">
-                    <input type="text" v-model="permissions[index].userId" />
+                <div class="permission-group" v-for="(p, index) of permissions" :key="index">
+                    <input type="text" v-model="permissions[index].userId" placeholder="User ID" />
                     
                     <div>
-                        <input type="checkbox" :id="'permissions-' + index + '-create'" value="true" v-model="permissions[index].create">
-                        <label :for="'permissions-' + index + '-create'">Create</label>
+                        <input type="checkbox" :id="'permissions-' + index + '-insert'" value="true" v-model="permissions[index].insert">
+                        <label :for="'permissions-' + index + '-insert'">Insert</label>
                     </div>
                     <div>
                         <input type="checkbox" :id="'permissions-' + index + '-read'" value="true" v-model="permissions[index].read">
@@ -242,7 +265,7 @@ const MainView = Vue.component("main-view", {
             tableNames: [],
             initialPermission: {
                 userId: "",
-                create: false,
+                insert: false,
                 read: false,
                 update: false,
                 delete: false,
@@ -253,10 +276,9 @@ const MainView = Vue.component("main-view", {
     async created() {
         this.addUser();
 
-        const payload = { userId: this.idTokenDecoded.sub };
-        socket.emit("table-names:read", payload, (response) => {
+        socket.emit("tables:list", null, (response) => {
             if (!response.error) {
-                this.tableNames = response;
+                this.tableNames = response.data;
             }
         });
     },
@@ -270,15 +292,18 @@ const MainView = Vue.component("main-view", {
     },
     methods: {
         async createAndGoToRoom() {
+            const tableName = `${ROOM_TABLE_NAMESPACE}_${this.room}`;
+
+            // Do not include empty permissions
+            const permissions = this.permissions.filter((permission) => permission.userId !== "");
             const payload = {
-                userId: this.idTokenDecoded.sub,
-                tableName: `${ROOM_TABLE_NAMESPACE}_${this.room}`,
-                permissions: this.permissions,
+                tableName,
+                permissions,
             };
-            socket.emit("table:create", payload, (response) => {
-                if (response.error) {
-                    console.log("table:create error", response.error);
-                } else {
+
+            socket.emit("tables:create", payload, (response) => {
+                console.log("tables:create response", response);
+                if (!response.error) {
                     this.$router.push({ name: "room", params: { userId: this.idTokenDecoded.sub, roomId: this.room } });
                 }
             });
@@ -286,24 +311,37 @@ const MainView = Vue.component("main-view", {
         addUser() {
             this.permissions.push(Object.assign({}, this.initialPermission));
         },
+        deleteRoom(roomId) {
+            const tableName = `${ROOM_TABLE_NAMESPACE}_${roomId}`;
+            socket.emit("tables:drop", { tableName }, (response) => {
+                console.log("drop table response", response);
+                this.tableNames = this.tableNames.filter((name) => {
+                    return name !== tableName;
+                });
+            });
+        },
     },
     template: `
 <div class="main">
-    <h2>My Rooms</h2>
-    <ul>
-        <li v-for="(roomId, index) of roomIds" :key="index">
-            <router-link :to="{ name: 'room', params: { userId: idTokenDecoded.sub, roomId: roomId }}">{{ roomId }}</router-link>
-        </li>
-    </ul>
-    <form class="create-room-form" v-on:submit.prevent="createAndGoToRoom">
+    <div v-if="roomIds.length > 0" class="card">
+        <h2>My Rooms</h2>
+        <ul class="rooms-list">
+            <li v-for="(roomId, index) of roomIds" :key="index">
+                <router-link :to="{ name: 'room', params: { userId: idTokenDecoded.sub, roomId: roomId }}">{{ roomId }}</router-link>
+                <button type="button" @click="deleteRoom(roomId)">Delete room</button>
+            </li>
+        </ul>
+    </div>
+    <form class="card" v-on:submit.prevent="createAndGoToRoom">
+        <h2>Create Room</h2>
         <label>Room name: <input v-model="room" type="text" /></label>
-        <div>Give access:</div>
-        <div v-for="(p, index) of permissions" :key="index">
-            <label>User ID:<input type="text" v-model="permissions[index].userId" /></label>
+        <h3>Permissions</h3>
+        <div class="permission-group" v-for="(p, index) of permissions" :key="index">
+            <label><input type="text" v-model="permissions[index].userId" placeholder="User ID" /></label>
             
             <div>
-                <input type="checkbox" :id="'permissions-' + index + '-create'" value="true" v-model="permissions[index].create">
-                <label :for="'permissions-' + index + '-create'">Create</label>
+                <input type="checkbox" :id="'permissions-' + index + '-insert'" value="true" v-model="permissions[index].insert">
+                <label :for="'permissions-' + index + '-insert'">Insert</label>
             </div>
             <div>
                 <input type="checkbox" :id="'permissions-' + index + '-read'" value="true" v-model="permissions[index].read">

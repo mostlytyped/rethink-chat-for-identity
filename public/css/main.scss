@@ -17,12 +17,16 @@ body {
     width: 100vw;
 }
 
-.create-room-form {
+.card {
     max-width: 500px;
-    margin: 0 auto;
+    margin: 0 auto 1em auto;
     background-color: white;
     padding: 1em;
     border-radius: 3px;
+}
+
+.rooms-list {
+    list-style: none;
 }
 
 .chat-room {
@@ -33,29 +37,35 @@ body {
     margin: 0 auto;
     overflow: hidden;
     height: calc(100% - 46px);
+}
 
-    form {
-        grid-area: msgform;
-        border-top: 1px solid black;
-        padding: 1em;
-        display: flex;
-        justify-content: space-between;
-        background-color: lightskyblue;
-        width: 100%;
-        > * {
-            margin: 0 5px;
-        }
-        input {
-            flex-grow: 1;
-            line-height: 2em;
-            padding: 0.25em;
-            border-radius: 5px;
-        }
-        button {
-            padding: 0.25em 5em;
-            font-weight: bold;
-        }
+.message-form {
+    grid-area: msgform;
+    border-top: 1px solid black;
+    padding: 1em;
+    display: flex;
+    justify-content: space-between;
+    background-color: lightskyblue;
+    width: 100%;
+    > * {
+        margin: 0 5px;
     }
+    input {
+        flex-grow: 1;
+        line-height: 2em;
+        padding: 0.25em;
+        border-radius: 5px;
+    }
+    button {
+        padding: 0.25em 5em;
+        font-weight: bold;
+    }
+}
+
+.permission-group {
+    background: rgb(210, 225, 241);
+    padding: 0.5em;
+    margin-bottom: 0.5em;
 }
 
 .chat-ui {
@@ -63,7 +73,7 @@ body {
 }
 
 #chatlog {
-    height: calc(100% - 70px);
+    height: calc(100vh - 116px);
     list-style-type: none;
     margin: 0;
     padding: 0;
@@ -90,6 +100,7 @@ body {
 .chat-permissions {
     background: #ccc;
     padding: 1em;
+    overflow-y: auto;
 }
 
 .app {
