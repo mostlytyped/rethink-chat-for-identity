@@ -59,7 +59,7 @@ body {
 .chat-ui {
   height: 100%; }
 
-#chatlog {
+#chat-log {
   height: calc(100vh - 116px);
   list-style-type: none;
   margin: 0;
@@ -67,17 +67,22 @@ body {
   display: flex;
   flex-direction: column-reverse;
   overflow-y: auto; }
-  #chatlog li {
+  #chat-log li {
     padding: 5px 10px;
-    display: grid;
-    grid-template-columns: 8em 5em auto; }
-    #chatlog li .timestamp {
+    display: flex; }
+    #chat-log li .timestamp {
       font-style: italic;
       color: #999; }
-    #chatlog li .user {
+    #chat-log li .user {
       font-weight: bold; }
-    #chatlog li:nth-child(odd) {
+    #chat-log li:nth-child(odd) {
       background-color: #d2e1f1; }
+    #chat-log li > * {
+      margin: 5px; }
+
+.chat-buttons {
+  flex-grow: 1;
+  text-align: right; }
 
 .chat-permissions {
   background: #ccc;
@@ -85,7 +90,6 @@ body {
   overflow-y: auto; }
 
 .app {
-  background: pink;
   height: 100vh; }
 
 .header {
