@@ -1,15 +1,4 @@
-import ClientOAuth2 from "client-oauth2";
-import jwt_decode from "jwt-decode";
-
-import socket from "./socket";
-
-const oauthClient = new ClientOAuth2({
-    clientId: process.env.VUE_APP_OAUTH_CLIENT_ID,
-    accessTokenUri: process.env.VUE_APP_OAUTH_TOKEN_URI,
-    authorizationUri: process.env.VUE_APP_OAUTH_AUTH_URI,
-    redirectUri: process.env.VUE_APP_OAUTH_REDIRECT_URI,
-    scopes: ["openid", "profile", "email"],
-});
+import { rid } from "./rethinkid";
 
 const ROOM_TABLE_NAMESPACE = "room";
 const GUEST_ROOMS_TABLE_NAMES = "guest_rooms";
@@ -17,35 +6,29 @@ const GUEST_ROOMS_TABLE_NAMES = "guest_rooms";
 const App = Vue.component("app", {
     data() {
         return {
-            idTokenDecoded: {},
+            loggedIn: false,
+            idTokenDecoded: {
+                sub: "",
+                email: "",
+            },
         };
     },
-    async created() {
-        // Get user
-        const idToken = localStorage.getItem("idToken");
-        if (idToken) {
-            try {
-                this.idTokenDecoded = jwt_decode(idToken);
-            } catch (error) {
-                console.log("id token decode error:", error);
-                localStorage.removeItem("idToken");
-            }
+    created() {
+        // Get user on page load
+        const loggedIn = rid.isLoggedIn();
+        if (loggedIn && loggedIn.idTokenDecoded) {
+            this.idTokenDecoded = loggedIn.idTokenDecoded;
+            this.loggedIn = true;
         }
-    },
-    computed: {
-        loggedIn: function () {
-            // not reactive
-            return localStorage.getItem("token");
-        },
     },
     methods: {
         signOut() {
-            console.log("sign out");
-            localStorage.removeItem("token");
-            localStorage.removeItem("idToken");
-
-            // a `beforeEach` global navigation guard in the router handles redirection
-            location.reload();
+            rid.logOut();
+        },
+        onReceivedIdToken(idTokenDecoded) {
+            // Set on callback after sign in
+            this.idTokenDecoded = idTokenDecoded;
+            this.loggedIn = true;
         },
     },
     template: `
@@ -59,7 +42,6 @@ const App = Vue.component("app", {
                 <template v-if="loggedIn">
                     <li>{{ idTokenDecoded.sub }}</li>
                     <li>{{ idTokenDecoded.email }}</li>
-                    <li>{{ idTokenDecoded.name }}</li>
                     <li><button @click="signOut">Sign out</button></li>
                 </template>
                 <template v-else>
@@ -68,7 +50,7 @@ const App = Vue.component("app", {
             </ul>
         </div>
     </div>
-    <router-view :idTokenDecoded="idTokenDecoded" />
+    <router-view :idTokenDecoded="idTokenDecoded"  v-on:received-id-token="onReceivedIdToken" />
 </div>`,
 });
 
@@ -80,25 +62,31 @@ const ChatItem = Vue.component("chat-item", {
         };
     },
     methods: {
-        deleteChat() {
-            const payload = { tableName: this.roomTableName, rowId: this.chat.id, userId: this.$route.params.userId };
-            socket.emit("table:delete", payload, (response) => {
-                console.log("table:delete response", response);
-            });
+        async deleteChat() {
+            try {
+                const response = await rid.tableDelete(this.roomTableName, this.chat.id, this.$route.params.userId);
+                console.log("tableDelete response", response);
+            } catch (e) {
+                console.error("tableDelete error:", e.message);
+            }
         },
-        updateChat() {
-            const payload = { tableName: this.roomTableName, row: this.chat, userId: this.$route.params.userId };
-            socket.emit("table:update", payload, (response) => {
-                console.log("table:update response", response);
+        async updateChat() {
+            try {
+                const response = await rid.tableUpdate(this.roomTableName, this.chat, this.$route.params.userId);
+                console.log("tableUpdate response", response);
                 this.updateChatFormIsVisible = false;
-            });
+            } catch (e) {
+                console.error("tableUpdate error:", e.message);
+            }
         },
-        replaceChat() {
-            const payload = { tableName: this.roomTableName, row: this.chat, userId: this.$route.params.userId };
-            socket.emit("table:replace", payload, (response) => {
-                console.log("table:replace response", response);
+        async replaceChat() {
+            try {
+                const response = await rid.tableReplace(this.roomTableName, this.chat, this.$route.params.userId);
+                console.log("tableReplace response", response);
                 this.updateChatFormIsVisible = false;
-            });
+            } catch (e) {
+                console.error("tableReplace error:", e.message);
+            }
         },
         toggleUpdateChat() {
             this.updateChatFormIsVisible = !this.updateChatFormIsVisible;
@@ -152,18 +140,16 @@ const ChatRoom = Vue.component("chat-room", {
         this.subscribe();
         this.fetchChats();
     },
-    beforeDestroy() {
+    async beforeDestroy() {
         // Not sure if this does anything useful
-        socket.off(this.socketRoomHandle);
+        rid.socket.off(this.socketRoomHandle);
 
-        console.log("unsubscribe from table");
-        socket.emit(
-            "table:unsubscribe",
-            { tableName: this.roomTableName, userId: this.$route.params.userId },
-            (response) => {
-                console.log("table:unsubscribe response", response);
-            },
-        );
+        try {
+            const response = await rid.tableUnsubscribe(this.roomTableName, this.$route.params.userId);
+            console.log("tableUnsubscribe response", response);
+        } catch (e) {
+            console.error("tableUnsubscribe error:", e.message);
+        }
     },
     computed: {
         roomTableName: function () {
@@ -174,37 +160,27 @@ const ChatRoom = Vue.component("chat-room", {
         },
     },
     methods: {
-        manageGuestRooms() {
+        async manageGuestRooms() {
             const row = { roomId: this.roomId, userId: this.userId };
 
-            const readPayload = { tableName: GUEST_ROOMS_TABLE_NAMES };
-            socket.emit("table:read", readPayload, (response) => {
-                let guestRoomExists = false;
+            try {
+                const readResponse = await rid.tableRead(GUEST_ROOMS_TABLE_NAMES);
 
-                // if there is no error, a guest rooms table exists, so search
-                // for a matching room
-                if (!response.error) {
-                    const guestRooms = response.data;
-                    guestRoomExists = guestRooms.some((g) => g.roomId === this.roomId && g.userId === this.userId);
-                }
+                const guestRooms = readResponse.data;
+                let guestRoomExists = guestRooms.some((g) => g.roomId === this.roomId && g.userId === this.userId);
 
-                // If response.error, table doesn't exist, insert
-                // or if table exists and room doesn't exist, insert
                 if (!guestRoomExists) {
-                    const insertPayload = { tableName: GUEST_ROOMS_TABLE_NAMES, row };
-                    socket.emit("table:insert", insertPayload, (response) => {
-                        console.log("guestRoomExists table:insert response", response);
-                    });
+                    await rid.tableInsert(GUEST_ROOMS_TABLE_NAMES, row);
                 }
-            });
+            } catch (e) {
+                console.error("manageGuestRooms tableRead error, so try to create+insert:", e.message);
+                // Table probably doesn't exist, create and insert
+                await rid.tableInsert(GUEST_ROOMS_TABLE_NAMES, row);
+            }
         },
-        fetchChats() {
-            const payload = { tableName: this.roomTableName, userId: this.userId };
-            socket.emit("table:read", payload, (response) => {
-                if (response.error) {
-                    this.hasAccess = false;
-                    return;
-                }
+        async fetchChats() {
+            try {
+                const response = await rid.tableRead(this.roomTableName, this.userId);
 
                 // user has access to this table
                 if (!this.isOwner) {
@@ -213,6 +189,8 @@ const ChatRoom = Vue.component("chat-room", {
 
                 const { data } = response;
 
+                if (!data) return;
+
                 data.sort(function (a, b) {
                     if (a.ts > b.ts) return -1;
                     if (a.ts < b.ts) return 1;
@@ -220,55 +198,58 @@ const ChatRoom = Vue.component("chat-room", {
                 });
 
                 this.chats = data;
-            });
+            } catch (e) {
+                console.error("fetchChats tableRead error:", e.message);
+                this.hasAccess = false;
+            }
         },
-        subscribe() {
-            const payload = { tableName: this.roomTableName, userId: this.$route.params.userId };
-            socket.emit("table:subscribe", payload, (response) => {
-                console.log("response subscribe", response);
-                if (response.error) {
-                    console.log("subscribe error", response.error);
-                } else {
-                    const socketTableHandle = response.data;
+        async subscribe() {
+            try {
+                const response = await rid.tableSubscribe(this.roomTableName, this.$route.params.userId);
 
-                    if (socketTableHandle) {
-                        this.socketRoomHandle = socketTableHandle;
+                const socketTableHandle = response.data;
 
-                        socket.on(this.socketRoomHandle, (changes) => {
-                            console.log("Received emitted changes", changes);
+                if (socketTableHandle) {
+                    this.socketRoomHandle = socketTableHandle;
 
-                            if (changes.new_val && changes.old_val === null) {
-                                console.log("Received new message");
-                                this.chats.unshift(changes.new_val);
+                    rid.socket.on(this.socketRoomHandle, (changes) => {
+                        console.log("Received emitted changes", changes);
+
+                        if (changes.new_val && changes.old_val === null) {
+                            console.log("Received new message");
+                            this.chats.unshift(changes.new_val);
+                        }
+                        if (changes.new_val === null && changes.old_val) {
+                            console.log("Received deleted message");
+                            // delete message
+                            const index = this.chats.findIndex((c) => c.id === changes.old_val.id);
+                            if (index > -1) {
+                                this.chats.splice(index, 1);
                             }
-                            if (changes.new_val === null && changes.old_val) {
-                                console.log("Received deleted message");
-                                // delete message
-                                const index = this.chats.findIndex((c) => c.id === changes.old_val.id);
-                                if (index > -1) {
-                                    this.chats.splice(index, 1);
-                                }
+                        }
+                        if (changes.new_val && changes.old_val) {
+                            console.log("Received updated message");
+                            // update
+                            const index = this.chats.findIndex((c) => c.id === changes.new_val.id);
+                            if (index > -1) {
+                                Vue.set(this.chats, index, changes.new_val);
                             }
-                            if (changes.new_val && changes.old_val) {
-                                console.log("Received updated message");
-                                // update
-                                const index = this.chats.findIndex((c) => c.id === changes.new_val.id);
-                                if (index > -1) {
-                                    Vue.set(this.chats, index, changes.new_val);
-                                }
-                            }
-                        });
-                    }
+                        }
+                    });
                 }
-            });
+            } catch (e) {
+                console.error("tableSubscribe", e.message);
+            }
         },
-        fetchPermissions() {
+        async fetchPermissions() {
             if (!this.isOwner) {
+                console.log("is not owner, do not get permissions");
                 return;
             }
 
-            const payload = { tableName: this.roomTableName };
-            socket.emit("permissions:get", payload, (response) => {
+            try {
+                const response = await rid.permissionsGet(this.roomTableName);
+
                 /**
                  * A form permission object
                  * @typedef {Object} FormPermission
@@ -281,51 +262,53 @@ const ChatRoom = Vue.component("chat-room", {
                  */
                 const formPermissions = [];
                 const userIds = [];
-                if (!response.error) {
-                    for (const permission of response.data) {
-                        if (!userIds.includes(permission.userId)) {
-                            userIds.push(permission.userId);
-                            const formPermission = {
-                                userId: permission.userId,
-                                read: false,
-                                insert: false,
-                                update: false,
-                                delete: false,
-                                readId: "",
-                                insertId: "",
-                                updateId: "",
-                                deleteId: "",
-                            };
 
-                            if (permission.permission === "read") {
-                                formPermission.read = true;
-                                formPermission.readId = permission.id;
-                            }
-                            if (permission.permission === "insert") {
-                                formPermission.insert = true;
-                                formPermission.insertId = permission.id;
-                            }
-                            if (permission.permission === "update") {
-                                formPermission.update = true;
-                                formPermission.updateId = permission.id;
-                            }
-                            if (permission.permission === "delete") {
-                                formPermission.delete = true;
-                                formPermission.deleteId = permission.id;
-                            }
+                for (const permission of response.data) {
+                    if (!userIds.includes(permission.userId)) {
+                        userIds.push(permission.userId);
+                        const formPermission = {
+                            userId: permission.userId,
+                            read: false,
+                            insert: false,
+                            update: false,
+                            delete: false,
+                            readId: "",
+                            insertId: "",
+                            updateId: "",
+                            deleteId: "",
+                        };
 
-                            formPermissions.push(formPermission);
-                        } else {
-                            const index = formPermissions.findIndex((p) => p.userId === permission.userId);
-                            formPermissions[index][permission.permission] = true;
-                            formPermissions[index][`${permission.permission}Id`] = permission.id;
+                        if (permission.permission === "read") {
+                            formPermission.read = true;
+                            formPermission.readId = permission.id;
                         }
+                        if (permission.permission === "insert") {
+                            formPermission.insert = true;
+                            formPermission.insertId = permission.id;
+                        }
+                        if (permission.permission === "update") {
+                            formPermission.update = true;
+                            formPermission.updateId = permission.id;
+                        }
+                        if (permission.permission === "delete") {
+                            formPermission.delete = true;
+                            formPermission.deleteId = permission.id;
+                        }
+
+                        formPermissions.push(formPermission);
+                    } else {
+                        const index = formPermissions.findIndex((p) => p.userId === permission.userId);
+                        formPermissions[index][permission.permission] = true;
+                        formPermissions[index][`${permission.permission}Id`] = permission.id;
                     }
-                    this.permissions = formPermissions;
                 }
-            });
+
+                this.permissions = formPermissions;
+            } catch (e) {
+                console.error("permissionsGet error:", e.message);
+            }
         },
-        sendMessage() {
+        async sendMessage() {
             const message = {
                 ts: Date.now(),
                 msg: this.message,
@@ -334,16 +317,15 @@ const ChatRoom = Vue.component("chat-room", {
                 roomId: this.roomId,
             };
 
-            const payload = { tableName: this.roomTableName, row: message, userId: this.userId };
-            console.log("insert payload", payload);
-            socket.emit("table:insert", payload, (response) => {
-                console.log("insert response", response);
-                if (!response.error) {
-                    this.message = "";
-                }
-            });
+            try {
+                const response = await rid.tableInsert(this.roomTableName, message, this.userId);
+                console.log("sendMessage tableInsert response", response);
+                this.message = "";
+            } catch (e) {
+                console.error("sendMessage tableInsert error:", e.message);
+            }
         },
-        setPermissions() {
+        async setPermissions() {
             // Do not include empty permissions
             const permissions = this.permissions.filter((permission) => permission.userId !== "");
 
@@ -370,25 +352,22 @@ const ChatRoom = Vue.component("chat-room", {
                         });
                     } else if (permission[`${type}Id`]) {
                         // a type that exists in the DB, because it has an ID, but is now false and needs to be deleted
-                        socket.emit("permissions:delete", { rowId: permission[`${type}Id`] }, (response) => {
-                            if (response.error) {
-                                console.log("permissions:delete response.error", response.error);
-                            }
-                            if (response.message) {
-                                console.log("permissions:delete response.message", response.message);
-                            }
-                        });
+                        try {
+                            const response = await rid.permissionsDelete(permission[`${type}Id`]);
+                            console.log("permissionsDelete response.message", response.message);
+                        } catch (e) {
+                            console.error("permissionsDelete error", e.message);
+                        }
                     }
                 }
             }
 
-            console.log("set permissions for payload", payload);
-
-            socket.emit("permissions:set", payload, (response) => {
-                if (!response.error) {
-                    this.fetchPermissions();
-                }
-            });
+            try {
+                await rid.permissionsSet(payload);
+                this.fetchPermissions();
+            } catch (e) {
+                console.error("permissionsSet error", e.message);
+            }
         },
         addUser() {
             this.permissions.push(Object.assign({}, this.initialPermission));
@@ -461,17 +440,19 @@ const MainView = Vue.component("main-view", {
         };
     },
     async created() {
-        socket.emit("tables:list", null, (response) => {
-            if (!response.error) {
-                this.tableNames = response.data;
-            }
-        });
-        const payload = { tableName: GUEST_ROOMS_TABLE_NAMES };
-        socket.emit("table:read", payload, (response) => {
-            if (!response.error) {
-                this.guestRooms = response.data;
-            }
-        });
+        try {
+            const response = await rid.tablesList();
+            this.tableNames = response.data;
+        } catch (e) {
+            console.error("tablesList error:", e.message);
+        }
+
+        try {
+            const response = await rid.tableRead(GUEST_ROOMS_TABLE_NAMES);
+            this.guestRooms = response.data;
+        } catch (e) {
+            //
+        }
     },
     computed: {
         roomIds: function () {
@@ -485,22 +466,21 @@ const MainView = Vue.component("main-view", {
         async createAndGoToRoom() {
             const tableName = `${ROOM_TABLE_NAMESPACE}_${this.room}`;
 
-            const payload = { tableName };
-
-            socket.emit("tables:create", payload, (response) => {
-                console.log("tables:create response", response);
-                if (!response.error) {
-                    this.$router.push({ name: "room", params: { userId: this.idTokenDecoded.sub, roomId: this.room } });
-                }
-            });
+            try {
+                await rid.tablesCreate(tableName);
+                this.$router.push({ name: "room", params: { userId: this.idTokenDecoded.sub, roomId: this.room } });
+            } catch (e) {
+                console.error("tablesCreate error:", e.message);
+            }
         },
-        deleteRoom(roomId) {
+        async deleteRoom(roomId) {
             const tableName = `${ROOM_TABLE_NAMESPACE}_${roomId}`;
-            socket.emit("tables:drop", { tableName }, (response) => {
-                console.log("drop table response", response);
-                this.tableNames = this.tableNames.filter((name) => {
-                    return name !== tableName;
-                });
+
+            const response = await rid.tablesDrop(tableName);
+
+            console.log("drop table response", response);
+            this.tableNames = this.tableNames.filter((name) => {
+                return name !== tableName;
             });
         },
     },
@@ -539,57 +519,11 @@ const LoggedOutView = Vue.component("logged-out-view", {
         };
     },
     async created() {
-        // Create and store a random "state" value
-        const state = this.generateRandomString();
-        localStorage.setItem("pkce_state", state);
-
-        // Create and store a new PKCE code_verifier (the plaintext random secret)
-        const codeVerifier = this.generateRandomString();
-        localStorage.setItem("pkce_code_verifier", codeVerifier);
-
-        // Hash and base64-urlencode the secret to use as the challenge
-        const codeChallenge = await this.pkceChallengeFromVerifier(codeVerifier);
-
-        this.signInUrl = oauthClient.code.getUri({
-            state: state,
-            query: {
-                code_challenge: codeChallenge,
-                code_challenge_method: "S256",
-            },
-        });
+        this.signInUrl = await rid.logInUri();
     },
     computed: {
         signUpUrl: function () {
-            const params = new URLSearchParams();
-            params.append("redirect_uri", process.env.VUE_APP_DATA_SIGN_UP_REDIRECT_URI);
-            return `${process.env.VUE_APP_DATA_SIGN_UP_URL}?${params.toString()}`;
-        },
-    },
-    methods: {
-        generateRandomString() {
-            const array = new Uint32Array(28);
-            window.crypto.getRandomValues(array);
-            return Array.from(array, (dec) => ("0" + dec.toString(16)).substr(-2)).join("");
-        },
-        async pkceChallengeFromVerifier(codeVerifier) {
-            const hashed = await this.sha256(codeVerifier);
-            return this.base64urlencode(hashed);
-        },
-        sha256(plain) {
-            const encoder = new TextEncoder();
-            const data = encoder.encode(plain);
-            return window.crypto.subtle.digest("SHA-256", data);
-        },
-        base64urlencode(arrayBuffer) {
-            // Convert the ArrayBuffer to string using Uint8 array to convert to what btoa accepts.
-            // btoa accepts chars only within ascii 0-255 and base64 encodes them.
-            // Then convert the base64 encoded to base64url encoded
-            //   (replace + with -, replace / with _, trim trailing =)
-            // TODO btoa is deprecated
-            return btoa(String.fromCharCode.apply(null, new Uint8Array(arrayBuffer)))
-                .replace(/\+/g, "-")
-                .replace(/\//g, "_")
-                .replace(/=+$/, "");
+            return rid.signUpUri();
         },
     },
     template: `
@@ -612,68 +546,19 @@ const CallbackView = Vue.component("callback-view", {
         };
     },
     async created() {
-        const params = new URLSearchParams(window.location.search);
+        const decodedTokens = await rid.getTokens();
 
-        // Check if the auth server returned an error string
-        const error = params.get("error");
-        if (error) {
-            this.error = error;
-            this.errorDescription = params.get("error_description");
+        if (decodedTokens.error) {
+            this.error = decodedTokens.error;
+            this.errorDescription = decodedTokens.errorDescription || "";
             return;
         }
 
-        // Make sure the auth server returned a code
-        const code = params.get("code");
-        if (!code) {
-            this.error = "No query param code";
-            return;
-        }
+        // Emit to parent because most views depend on the ID token for user info
+        // Set as data in parent so the app reacts.
+        this.$emit("received-id-token", decodedTokens.idTokenDecoded);
 
-        // Verify state matches what we set at the beginning
-        if (localStorage.getItem("pkce_state") !== params.get("state")) {
-            this.error = "State did not match. Possible CSRF attack";
-        }
-
-        let getTokenResponse;
-        try {
-            getTokenResponse = await oauthClient.code.getToken(window.location.href, {
-                body: {
-                    code_verifier: localStorage.getItem("pkce_code_verifier") || "",
-                },
-            });
-        } catch (error) {
-            console.log("error", error);
-        }
-
-        if (!getTokenResponse) {
-            this.error = "could not get token response";
-            return;
-        }
-
-        // Clean these up since we don't need them anymore
-        localStorage.removeItem("pkce_state");
-        localStorage.removeItem("pkce_code_verifier");
-
-        // Store tokens and sign user in locally
-        const token = getTokenResponse.data.access_token;
-        const idToken = getTokenResponse.data.id_token;
-
-        localStorage.setItem("token", token);
-        localStorage.setItem("idToken", idToken);
-
-        socket.auth = {
-            token: localStorage.getItem("token"),
-        };
-
-        try {
-            jwt_decode(token);
-            jwt_decode(idToken);
-
-            this.$router.push({ name: "home" });
-            location.reload();
-        } catch (error) {
-            console.log("token decode error:", error);
-        }
+        this.$router.push({ name: "home" });
     },
     template: `
 <div>
