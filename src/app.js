@@ -1,14 +1,34 @@
 import { rid } from "./rethinkid";
+import router from "./router";
 
-const ROOM_TABLE_NAMESPACE = "room";
-const GUEST_ROOMS_TABLE_NAMES = "guest_rooms";
+import { ROOM_TABLE_NAMESPACE, GUEST_ROOMS_TABLE_NAME } from "./constants";
+
+/**
+ * A form permission object
+ * @typedef {Object} FormPermission
+ * @property {string} id
+ * @property {string} userId
+ * @property {boolean} read
+ * @property {boolean} insert
+ * @property {boolean} update
+ * @property {boolean} delete
+ */
+
+/**
+ * A payload-ready permission object
+ * @typedef {Object} PayloadPermission
+ * @property {string} id
+ * @property {string} tableName
+ * @property {string} userId
+ * @property {string} type - 'read', 'insert', 'update', 'delete'
+ */
 
 const App = Vue.component("app", {
     data() {
         return {
             loggedIn: false,
-            idTokenDecoded: {
-                sub: "",
+            user: {
+                id: "",
                 email: "",
             },
         };
@@ -16,19 +36,14 @@ const App = Vue.component("app", {
     created() {
         // Get user on page load
         const loggedIn = rid.isLoggedIn();
-        if (loggedIn && loggedIn.idTokenDecoded) {
-            this.idTokenDecoded = loggedIn.idTokenDecoded;
+        if (loggedIn) {
             this.loggedIn = true;
+            this.user = rid.userInfo();
         }
     },
     methods: {
         signOut() {
             rid.logOut();
-        },
-        onReceivedIdToken(idTokenDecoded) {
-            // Set on callback after sign in
-            this.idTokenDecoded = idTokenDecoded;
-            this.loggedIn = true;
         },
     },
     template: `
@@ -40,8 +55,8 @@ const App = Vue.component("app", {
         <div>
             <ul class="header-menu">
                 <template v-if="loggedIn">
-                    <li>{{ idTokenDecoded.sub }}</li>
-                    <li>{{ idTokenDecoded.email }}</li>
+                    <li>{{ user.id }}</li>
+                    <li>{{ user.email }}</li>
                     <li><button @click="signOut">Sign out</button></li>
                 </template>
                 <template v-else>
@@ -50,42 +65,57 @@ const App = Vue.component("app", {
             </ul>
         </div>
     </div>
-    <router-view :idTokenDecoded="idTokenDecoded"  v-on:received-id-token="onReceivedIdToken" />
+    <router-view :user="user" />
 </div>`,
 });
 
-const ChatItem = Vue.component("chat-item", {
+Vue.component("chat-item", {
     props: ["chat", "roomTableName"],
     data() {
         return {
             updateChatFormIsVisible: false,
         };
     },
+    computed: {
+        roomTable: async function () {
+            return await rid.table(this.roomTableName);
+        },
+    },
     methods: {
         async deleteChat() {
             try {
-                const response = await rid.tableDelete(this.roomTableName, this.chat.id, this.$route.params.userId);
-                console.log("tableDelete response", response);
+                const roomTable = await this.roomTable;
+                const response = await roomTable.delete({
+                    rowId: this.chat.id,
+                    userId: this.$route.params.userId,
+                });
+                console.log("roomTable.delete response", response);
             } catch (e) {
-                console.error("tableDelete error:", e.message);
+                console.error("roomTable.delete error:", e.message);
             }
         },
         async updateChat() {
             try {
-                const response = await rid.tableUpdate(this.roomTableName, this.chat, this.$route.params.userId);
-                console.log("tableUpdate response", response);
+                const roomTable = await this.roomTable;
+                const response = await roomTable.update(this.chat, {
+                    userId: this.$route.params.userId,
+                });
+                console.log("roomTable.update response", response);
                 this.updateChatFormIsVisible = false;
             } catch (e) {
-                console.error("tableUpdate error:", e.message);
+                console.error("roomTable.update error:", e.message);
             }
         },
         async replaceChat() {
             try {
-                const response = await rid.tableReplace(this.roomTableName, this.chat, this.$route.params.userId);
-                console.log("tableReplace response", response);
+                const roomTable = await this.roomTable;
+                const response = await roomTable.replace(this.chat, {
+                    userId: this.$route.params.userId,
+                });
+                console.log("roomTable.replace response", response);
                 this.updateChatFormIsVisible = false;
             } catch (e) {
-                console.error("tableReplace error:", e.message);
+                console.error("roomTable.replace error:", e.message);
             }
         },
         toggleUpdateChat() {
@@ -116,8 +146,8 @@ const ChatItem = Vue.component("chat-item", {
     `,
 });
 
-const ChatRoom = Vue.component("chat-room", {
-    props: ["userId", "roomId", "idTokenDecoded"],
+Vue.component("chat-room", {
+    props: ["userId", "roomId", "user"],
     data() {
         return {
             chats: [],
@@ -131,7 +161,7 @@ const ChatRoom = Vue.component("chat-room", {
             },
             permissions: [],
             hasAccess: true,
-            socketRoomHandle: "", // <table user id>_<table name>
+            roomUnsubscribe: null,
         };
     },
     created() {
@@ -141,22 +171,21 @@ const ChatRoom = Vue.component("chat-room", {
         this.fetchChats();
     },
     async beforeDestroy() {
-        // Not sure if this does anything useful
-        rid.socket.off(this.socketRoomHandle);
-
-        try {
-            const response = await rid.tableUnsubscribe(this.roomTableName, this.$route.params.userId);
-            console.log("tableUnsubscribe response", response);
-        } catch (e) {
-            console.error("tableUnsubscribe error:", e.message);
-        }
+        console.log("unsubscribe");
+        this.roomUnsubscribe();
     },
     computed: {
         roomTableName: function () {
             return `${ROOM_TABLE_NAMESPACE}_${this.roomId}`;
         },
+        roomTable: async function () {
+            return await rid.table(this.roomTableName, { userId: this.userId });
+        },
+        guestTable: async function () {
+            return await rid.table(GUEST_ROOMS_TABLE_NAME);
+        },
         isOwner: function () {
-            return this.idTokenDecoded.sub === this.$route.params.userId;
+            return this.user.id === this.$route.params.userId;
         },
     },
     methods: {
@@ -164,23 +193,27 @@ const ChatRoom = Vue.component("chat-room", {
             const row = { roomId: this.roomId, userId: this.userId };
 
             try {
-                const readResponse = await rid.tableRead(GUEST_ROOMS_TABLE_NAMES);
+                const guestTable = await this.guestTable;
+                const readResponse = await guestTable.read();
 
                 const guestRooms = readResponse.data;
                 let guestRoomExists = guestRooms.some((g) => g.roomId === this.roomId && g.userId === this.userId);
 
                 if (!guestRoomExists) {
-                    await rid.tableInsert(GUEST_ROOMS_TABLE_NAMES, row);
+                    await guestTable.insert(row);
                 }
             } catch (e) {
-                console.error("manageGuestRooms tableRead error, so try to create+insert:", e.message);
+                console.error("manageGuestRooms guestTable.read error, so try to create+insert:", e.message);
                 // Table probably doesn't exist, create and insert
-                await rid.tableInsert(GUEST_ROOMS_TABLE_NAMES, row);
+                await guestTable.insert(row);
             }
         },
         async fetchChats() {
             try {
-                const response = await rid.tableRead(this.roomTableName, this.userId);
+                const roomTable = await this.roomTable;
+                const response = await roomTable.read();
+
+                console.log("response", response);
 
                 // user has access to this table
                 if (!this.isOwner) {
@@ -205,40 +238,41 @@ const ChatRoom = Vue.component("chat-room", {
         },
         async subscribe() {
             try {
-                const response = await rid.tableSubscribe(this.roomTableName, this.$route.params.userId);
+                const listener = (changes) => {
+                    console.log("Received emitted changes", changes);
 
-                const socketTableHandle = response.data;
-
-                if (socketTableHandle) {
-                    this.socketRoomHandle = socketTableHandle;
-
-                    rid.socket.on(this.socketRoomHandle, (changes) => {
-                        console.log("Received emitted changes", changes);
-
-                        if (changes.new_val && changes.old_val === null) {
-                            console.log("Received new message");
-                            this.chats.unshift(changes.new_val);
+                    if (changes.new_val && changes.old_val === null) {
+                        console.log("Received new message");
+                        this.chats.unshift(changes.new_val);
+                    }
+                    if (changes.new_val === null && changes.old_val) {
+                        console.log("Received deleted message");
+                        // delete message
+                        const index = this.chats.findIndex((c) => c.id === changes.old_val.id);
+                        if (index > -1) {
+                            this.chats.splice(index, 1);
                         }
-                        if (changes.new_val === null && changes.old_val) {
-                            console.log("Received deleted message");
-                            // delete message
-                            const index = this.chats.findIndex((c) => c.id === changes.old_val.id);
-                            if (index > -1) {
-                                this.chats.splice(index, 1);
-                            }
+                    }
+                    if (changes.new_val && changes.old_val) {
+                        console.log("Received updated message");
+                        // update
+                        const index = this.chats.findIndex((c) => c.id === changes.new_val.id);
+                        if (index > -1) {
+                            Vue.set(this.chats, index, changes.new_val);
                         }
-                        if (changes.new_val && changes.old_val) {
-                            console.log("Received updated message");
-                            // update
-                            const index = this.chats.findIndex((c) => c.id === changes.new_val.id);
-                            if (index > -1) {
-                                Vue.set(this.chats, index, changes.new_val);
-                            }
-                        }
-                    });
-                }
+                    }
+                };
+
+                const roomTable = await this.roomTable;
+
+                this.roomUnsubscribe = await roomTable.subscribe(
+                    {
+                        userId: this.$route.params.userId,
+                    },
+                    listener,
+                );
             } catch (e) {
-                console.error("tableSubscribe", e.message);
+                console.error("roomTable.subscribe", e.message);
             }
         },
         async fetchPermissions() {
@@ -248,17 +282,10 @@ const ChatRoom = Vue.component("chat-room", {
             }
 
             try {
-                const response = await rid.permissionsGet(this.roomTableName);
+                const response = await rid.permissionsGet({ tableName: this.roomTableName });
 
                 /**
-                 * A form permission object
-                 * @typedef {Object} FormPermission
-                 * @property {string} id
-                 * @property {string} userId
-                 * @property {boolean} read
-                 * @property {boolean} insert
-                 * @property {boolean} update
-                 * @property {boolean} delete
+                 * @type {FormPermission[]}
                  */
                 const formPermissions = [];
                 const userIds = [];
@@ -278,19 +305,19 @@ const ChatRoom = Vue.component("chat-room", {
                             deleteId: "",
                         };
 
-                        if (permission.permission === "read") {
+                        if (permission.type === "read") {
                             formPermission.read = true;
                             formPermission.readId = permission.id;
                         }
-                        if (permission.permission === "insert") {
+                        if (permission.type === "insert") {
                             formPermission.insert = true;
                             formPermission.insertId = permission.id;
                         }
-                        if (permission.permission === "update") {
+                        if (permission.type === "update") {
                             formPermission.update = true;
                             formPermission.updateId = permission.id;
                         }
-                        if (permission.permission === "delete") {
+                        if (permission.type === "delete") {
                             formPermission.delete = true;
                             formPermission.deleteId = permission.id;
                         }
@@ -298,8 +325,8 @@ const ChatRoom = Vue.component("chat-room", {
                         formPermissions.push(formPermission);
                     } else {
                         const index = formPermissions.findIndex((p) => p.userId === permission.userId);
-                        formPermissions[index][permission.permission] = true;
-                        formPermissions[index][`${permission.permission}Id`] = permission.id;
+                        formPermissions[index][permission.type] = true;
+                        formPermissions[index][`${permission.type}Id`] = permission.id;
                     }
                 }
 
@@ -312,34 +339,32 @@ const ChatRoom = Vue.component("chat-room", {
             const message = {
                 ts: Date.now(),
                 msg: this.message,
-                userId: this.idTokenDecoded.sub,
-                username: this.idTokenDecoded.name,
+                userId: this.user.id,
+                username: this.user.name,
                 roomId: this.roomId,
             };
 
             try {
-                const response = await rid.tableInsert(this.roomTableName, message, this.userId);
-                console.log("sendMessage tableInsert response", response);
+                const roomTable = await this.roomTable;
+                const response = await roomTable.insert(message, { userId: this.userId });
+                console.log("sendMessage roomTable.Insert response", response);
                 this.message = "";
             } catch (e) {
-                console.error("sendMessage tableInsert error:", e.message);
+                console.error("sendMessage roomTable.Insert error:", e.message);
             }
         },
         async setPermissions() {
-            // Do not include empty permissions
+            /**
+             * Do not include empty permissions
+             * @type {FormPermission[]}
+             */
             const permissions = this.permissions.filter((permission) => permission.userId !== "");
 
+            /**
+             * @type {PayloadPermission[]}
+             */
             const payload = [];
             const permissionTypes = ["read", "insert", "update", "delete"];
-
-            /**
-             * A backend permission object
-             * @typedef {Object} Permission
-             * @property {string} id
-             * @property {string} tableName
-             * @property {string} userId
-             * @property {string} permission - 'read', 'insert', 'update', 'delete'
-             */
 
             for (const permission of permissions) {
                 for (const type of permissionTypes) {
@@ -348,12 +373,12 @@ const ChatRoom = Vue.component("chat-room", {
                             id: permission[`${type}Id`],
                             tableName: this.roomTableName,
                             userId: permission.userId,
-                            permission: type,
+                            type: type,
                         });
                     } else if (permission[`${type}Id`]) {
                         // a type that exists in the DB, because it has an ID, but is now false and needs to be deleted
                         try {
-                            const response = await rid.permissionsDelete(permission[`${type}Id`]);
+                            const response = await rid.permissionsDelete({ permissionId: permission[`${type}Id`] });
                             console.log("permissionsDelete response.message", response.message);
                         } catch (e) {
                             console.error("permissionsDelete error", e.message);
@@ -423,175 +448,6 @@ const ChatRoom = Vue.component("chat-room", {
     </div>
 </div>
     `,
-});
-
-const RoomView = Vue.component("room-view", {
-    props: ["idTokenDecoded"],
-    template: `<chat-room :userId="$route.params.userId" :roomId="$route.params.roomId" :idTokenDecoded="idTokenDecoded" />`,
-});
-
-const MainView = Vue.component("main-view", {
-    props: ["idTokenDecoded"],
-    data() {
-        return {
-            room: "lobby",
-            tableNames: [],
-            guestRooms: [],
-        };
-    },
-    async created() {
-        try {
-            const response = await rid.tablesList();
-            this.tableNames = response.data;
-        } catch (e) {
-            console.error("tablesList error:", e.message);
-        }
-
-        try {
-            const response = await rid.tableRead(GUEST_ROOMS_TABLE_NAMES);
-            this.guestRooms = response.data;
-        } catch (e) {
-            //
-        }
-    },
-    computed: {
-        roomIds: function () {
-            const prefix = `${ROOM_TABLE_NAMESPACE}_`;
-            return this.tableNames
-                .filter((tableName) => tableName.startsWith(prefix))
-                .map((name) => name.replace(prefix, ""));
-        },
-    },
-    methods: {
-        async createAndGoToRoom() {
-            const tableName = `${ROOM_TABLE_NAMESPACE}_${this.room}`;
-
-            try {
-                await rid.tablesCreate(tableName);
-                this.$router.push({ name: "room", params: { userId: this.idTokenDecoded.sub, roomId: this.room } });
-            } catch (e) {
-                console.error("tablesCreate error:", e.message);
-            }
-        },
-        async deleteRoom(roomId) {
-            const tableName = `${ROOM_TABLE_NAMESPACE}_${roomId}`;
-
-            const response = await rid.tablesDrop(tableName);
-
-            console.log("drop table response", response);
-            this.tableNames = this.tableNames.filter((name) => {
-                return name !== tableName;
-            });
-        },
-    },
-    template: `
-<div class="main">
-    <div v-if="roomIds.length > 0" class="card">
-        <h2>My Rooms</h2>
-        <ul class="rooms-list">
-            <li v-for="(roomId, index) of roomIds" :key="index">
-                <router-link :to="{ name: 'room', params: { userId: idTokenDecoded.sub, roomId: roomId }}">{{ roomId }}</router-link>
-                <button type="button" @click="deleteRoom(roomId)">Delete room</button>
-            </li>
-        </ul>
-    </div>
-    <div v-if="guestRooms.length > 0" class="card">
-        <h2>My Guest Rooms</h2>
-        <ul class="rooms-list">
-            <li v-for="(room, index) of guestRooms" :key="index">
-                <router-link :to="{ name: 'room', params: { userId: room.userId, roomId: room.roomId }}">{{ room.roomId }}({{ room.userId }})</router-link>
-            </li>
-        </ul>
-    </div>
-    <form class="card" v-on:submit.prevent="createAndGoToRoom">
-        <h2>Create Room</h2>
-        <label>Room name: <input v-model="room" type="text" /></label>
-        <button type="submit">Create and Join Room</button>
-    </form>
-</div>
-    `,
-});
-
-const LoggedOutView = Vue.component("logged-out-view", {
-    data() {
-        return {
-            signInUrl: "",
-        };
-    },
-    async created() {
-        this.signInUrl = await rid.logInUri();
-    },
-    computed: {
-        signUpUrl: function () {
-            return rid.signUpUri();
-        },
-    },
-    template: `
-<div>
-    <h1>You are logged out</h1>
-    <div>
-        <a :href="signInUrl">Sign in!</a>
-    </div>
-    <div>
-        <a :href="signUpUrl">Sign up</a>
-    </div>
-</div>`,
-});
-
-const CallbackView = Vue.component("callback-view", {
-    data() {
-        return {
-            error: "",
-            errorDescription: "",
-        };
-    },
-    async created() {
-        const decodedTokens = await rid.getTokens();
-
-        if (decodedTokens.error) {
-            this.error = decodedTokens.error;
-            this.errorDescription = decodedTokens.errorDescription || "";
-            return;
-        }
-
-        // Emit to parent because most views depend on the ID token for user info
-        // Set as data in parent so the app reacts.
-        this.$emit("received-id-token", decodedTokens.idTokenDecoded);
-
-        this.$router.push({ name: "home" });
-    },
-    template: `
-<div>
-    <h1>Oauth Callback</h1>
-    <div v-if="error">
-      <h2>{{ error }}</h2>
-      <p>{{ errorDescription }}</p>
-    </div>
-</div>`,
-});
-
-const routes = [
-    { path: "/", name: "home", component: MainView },
-    { path: "/:userId/room/:roomId", name: "room", component: RoomView },
-    { path: "/logged-out", name: "logged-out", component: LoggedOutView, meta: { requiresAuth: false } },
-    { path: "/callback", name: "callback", component: CallbackView, meta: { requiresAuth: false } },
-];
-const router = new VueRouter({
-    mode: "history",
-    routes,
-});
-
-router.beforeEach((to, from, next) => {
-    // If route requires auth
-    if (to.matched.some((record) => record.meta.requiresAuth !== false)) {
-        if (!localStorage.getItem("token")) {
-            // Redirect to the sign in view if no token found and route requires auth
-            next({ name: "logged-out" });
-            return;
-        }
-    }
-
-    next();
 });
 
 new Vue({
