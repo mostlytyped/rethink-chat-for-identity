@@ -1,7 +1,5 @@
 import router from "../router";
 
-import { RethinkID } from "@mostlytyped/rethinkid-js-sdk";
-
 const config = {
     rethinkIdBaseUri: "https://id.rethinkdb.cloud",
     appId: "<your-app-id>",
@@ -12,4 +10,6 @@ const config = {
         window.location.reload();
     },
 };
+
+// `RethinkID` is imported via a script tag in index.html
 export const rid = new RethinkID(config);

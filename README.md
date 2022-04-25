@@ -4,8 +4,6 @@
 
 Add your RethinkID app ID in `rethinkid/index.js`.
 
-Install npm modules. The `@mostlytyped/rethinkid-js-sdk` is hosted as a private GitHub package and requires [authentication](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry#authenticating-to-github-packages).
-
 ```bash
 npm install
 ```
