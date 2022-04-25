@@ -1,9 +1,15 @@
+import router from "../router";
+
 import { RethinkID } from "@mostlytyped/rethinkid-js-sdk";
 
 const config = {
-    appId: "ff1f3a69-115d-4383-acdc-495b266819da",
+    rethinkIdBaseUri: "https://id.rethinkdb.cloud",
+    appId: "<your-app-id>",
     signUpRedirectUri: "http://localhost:8080",
     logInRedirectUri: "http://localhost:8080/callback",
+    onLogInComplete: () => {
+        router.push({ name: "home" });
+        window.location.reload();
+    },
 };
-
 export const rid = new RethinkID(config);
