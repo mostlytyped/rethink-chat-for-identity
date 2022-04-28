@@ -4,7 +4,7 @@ const baseURL = process.env.NODE_ENV === "production" ? window.location.origin :
 
 const config = {
     rethinkIdBaseUri: "https://id.rethinkdb.cloud",
-    appId: "7925ef52-d263-4f24-be9a-bbff1e824e8e",
+    appId: "6d85d59f-d167-4724-acbb-39090821593e",
     signUpRedirectUri: baseURL,
     logInRedirectUri: `${baseURL}/callback`,
     onLogInComplete: () => {
