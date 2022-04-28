@@ -1,10 +1,12 @@
 import router from "../router";
 
+const baseURL = process.env.NODE_ENV === "production" ? window.location.origin : "http://localhost:8080";
+
 const config = {
     rethinkIdBaseUri: "https://id.rethinkdb.cloud",
-    appId: "<your-app-id>",
-    signUpRedirectUri: "http://localhost:8080",
-    logInRedirectUri: "http://localhost:8080/callback",
+    appId: "7925ef52-d263-4f24-be9a-bbff1e824e8e",
+    signUpRedirectUri: baseURL,
+    logInRedirectUri: `${baseURL}/callback`,
     onLogInComplete: () => {
         router.push({ name: "home" });
         window.location.reload();
