@@ -206,7 +206,7 @@ Vue.component("chat-room", {
                 console.error("manageGuestRooms guestTable.read error, so try to create+insert:", e.message);
                 // Table probably doesn't exist, create and insert
                 // Use tableInsert instead of table.insert because assuming table doesn't yet exist.
-                await rid.tableInsert(GUEST_ROOMS_TABLE_NAMES, row);
+                await rid.tableInsert(GUEST_ROOMS_TABLE_NAME, row);
             }
         },
         async fetchChats() {
