@@ -2,10 +2,14 @@
 
 ## Run locally
 
-Create a `.env` file. Use `example.env` as a reference.
+Add your RethinkID app ID in `rethinkid/index.js`.
+
+```bash
+npm install
+```
 
 ```bash
 npm run serve # start the Express server static files
 npm run build-watch # use Webpack to build app.js, the Vue app
-sass --watch public/css:public/css
+npm run build # use Webpack to build for prod
 ```

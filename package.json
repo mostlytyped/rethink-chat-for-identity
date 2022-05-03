@@ -3,23 +3,24 @@
     "version": "0.0.1",
     "description": "my first socket.io app",
     "scripts": {
-        "build": "webpack",
-        "build-watch": "webpack --watch",
+        "build": "webpack --mode=production",
+        "build-watch": "webpack --watch --mode=development",
         "serve": "node index.js"
     },
     "dependencies": {
-        "client-oauth2": "^4.3.3",
         "connect-history-api-fallback": "^1.6.0",
         "dotenv": "^10.0.0",
-        "express": "^4.17.1",
-        "jwt-decode": "^3.1.2",
-        "socket.io-client": "^4.3.2"
+        "express": "^4.17.1"
     },
     "devDependencies": {
+        "copy-webpack-plugin": "^10.2.4",
+        "dart-sass": "^1.25.0",
         "path": "^0.12.7",
         "process": "^0.11.10",
         "querystring-es3": "^0.2.1",
+        "sass-loader": "^12.6.0",
         "webpack": "^5.61.0",
-        "webpack-cli": "^4.9.1"
+        "webpack-cli": "^4.9.1",
+        "webpack-remove-empty-scripts": "^0.8.0"
     }
 }
