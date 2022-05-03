@@ -10,9 +10,11 @@ const routes = [
         path: "/callback",
         name: "callback",
         meta: { requiresAuth: false },
-        beforeEnter(to, from, next) {
+        async beforeEnter(to, from, next) {
             try {
-                rid.completeLogIn();
+                await rid.completeLogIn();
+                next({ name: "home" });
+                window.location.reload();
             } catch (e) {
                 console.error("completeLogIn error:", e.message);
             }
