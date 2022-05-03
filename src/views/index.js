@@ -90,28 +90,29 @@ export const MainView = Vue.component("main-view", {
 });
 
 export const LoggedOutView = Vue.component("logged-out-view", {
-    // data() {
-    //     return {};
-    // },
+    data() {
+        return {
+            logInUri: "",
+        };
+    },
+    async created() {
+        this.logInUri = await rid.logInUri();
+    },
     computed: {
         signUpUrl: function () {
             return rid.signUpUri();
         },
     },
-    methods: {
-        openLogInWindow() {
-            // logIn.openLogInWindow();
-            rid.openLogInWindow();
-        },
-    },
     template: `
 <div>
-  <h1>You are logged out</h1>
-  <div>
-      <button @click="openLogInWindow">Sign in</button>
-  </div>
-  <div>
-      <a :href="signUpUrl">Sign up</a>
-  </div>
+    <h1>You are logged out</h1>
+    <template v-if="logInUri">
+        <div>
+            <a :href="logInUri">Log in</a>
+        </div>
+        <div>
+            <a :href="signUpUrl">Sign up</a>
+        </div>
+    </template>
 </div>`,
 });
