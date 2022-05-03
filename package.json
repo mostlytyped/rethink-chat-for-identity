@@ -4,13 +4,7 @@
     "description": "my first socket.io app",
     "scripts": {
         "build": "webpack --mode=production",
-        "build-watch": "webpack --watch --mode=development",
-        "serve": "node index.js"
-    },
-    "dependencies": {
-        "connect-history-api-fallback": "^1.6.0",
-        "dotenv": "^10.0.0",
-        "express": "^4.17.1"
+        "serve": "npx webpack serve"
     },
     "devDependencies": {
         "copy-webpack-plugin": "^10.2.4",
@@ -21,6 +15,7 @@
         "sass-loader": "^12.6.0",
         "webpack": "^5.61.0",
         "webpack-cli": "^4.9.1",
+        "webpack-dev-server": "^4.8.1",
         "webpack-remove-empty-scripts": "^0.8.0"
     }
 }
