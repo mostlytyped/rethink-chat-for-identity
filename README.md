@@ -8,8 +8,14 @@ Add your RethinkID app ID in `rethinkid/index.js`.
 npm install
 ```
 
+### Watch build and run dev server locally
+
 ```bash
-npm run serve # start the Express server static files
-npm run build-watch # use Webpack to build app.js, the Vue app
-npm run build # use Webpack to build for prod
+npm run serve
+```
+
+### Build for production
+
+```bash
+npm run build
 ```

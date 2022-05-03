@@ -1,10 +1,18 @@
 const path = require("path");
 const webpack = require("webpack");
-const dotenv = require("dotenv");
 const CopyPlugin = require("copy-webpack-plugin");
 const RemoveEmptyScriptsPlugin = require("webpack-remove-empty-scripts");
 
 module.exports = {
+    mode: "development",
+    devServer: {
+        historyApiFallback: true,
+        static: {
+            directory: path.join(__dirname, "dist"),
+        },
+        compress: true,
+        port: 8080,
+    },
     entry: ["./src/app.js", "./src/scss/main.scss"],
     output: {
         path: path.resolve(__dirname, "dist"),
@@ -31,9 +39,6 @@ module.exports = {
         ],
     },
     plugins: [
-        new webpack.DefinePlugin({
-            "process.env": JSON.stringify(dotenv.config().parsed),
-        }),
         new CopyPlugin({
             patterns: [{ from: "public", to: "." }],
         }),
