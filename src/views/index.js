@@ -43,7 +43,6 @@ export const MainView = Vue.component("main-view", {
         async createAndGoToRoom() {
             // Replace space with dash
             const roomName = this.room.toLowerCase().replace(/ /g, "-");
-            console.log("roomName", roomName);
             const tableName = `${ROOM_TABLE_NAMESPACE}_${roomName}`;
 
             try {
