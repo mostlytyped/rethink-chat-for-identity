@@ -41,50 +41,49 @@ export const MainView = Vue.component("main-view", {
     },
     methods: {
         async createAndGoToRoom() {
-            const tableName = `${ROOM_TABLE_NAMESPACE}_${this.room}`;
+            // Replace space with dash
+            const roomName = this.room.toLowerCase().replace(/ /g, "-");
+            const tableName = `${ROOM_TABLE_NAMESPACE}_${roomName}`;
 
             try {
                 await rid.tablesCreate(tableName);
-                this.$router.push({ name: "room", params: { userId: this.user.id, roomId: this.room } });
+                this.$router.push({ name: "room", params: { userId: this.user.id, roomId: roomName } });
             } catch (e) {
                 console.error("tablesCreate error:", e.message);
             }
         },
-        async deleteRoom(roomId) {
-            const tableName = `${ROOM_TABLE_NAMESPACE}_${roomId}`;
-
-            const response = await rid.tablesDrop(tableName);
-
-            console.log("drop table response", response);
-            this.tableNames = this.tableNames.filter((name) => {
-                return name !== tableName;
-            });
-        },
     },
     template: `
 <div class="main">
-  <div v-if="roomIds.length > 0" class="card">
-      <h2>My Rooms</h2>
-      <ul class="rooms-list">
-          <li v-for="(roomId, index) of roomIds" :key="index">
-              <router-link :to="{ name: 'room', params: { userId: user.id, roomId: roomId }}">{{ roomId }}</router-link>
-              <button type="button" @click="deleteRoom(roomId)">Delete room</button>
-          </li>
-      </ul>
-  </div>
-  <div v-if="guestRooms.length > 0" class="card">
-      <h2>My Guest Rooms</h2>
-      <ul class="rooms-list">
-          <li v-for="(room, index) of guestRooms" :key="index">
-              <router-link :to="{ name: 'room', params: { userId: room.userId, roomId: room.roomId }}">{{ room.roomId }}({{ room.userId }})</router-link>
-          </li>
-      </ul>
-  </div>
-  <form class="card" v-on:submit.prevent="createAndGoToRoom">
-      <h2>Create Room</h2>
-      <label>Room name: <input v-model="room" type="text" /></label>
-      <button type="submit">Create and Join Room</button>
-  </form>
+    <h1>Dashboard</h1>
+    <div class="dashboard-grid">
+        <div class="card">
+            <form v-on:submit.prevent="createAndGoToRoom">
+                <h2>Create Room</h2>
+                <div>
+                    <label for="room-name">Room name</label>
+                    <input id="room-name" class="u-full-width" v-model="room" type="text" />
+                </div>
+                <button type="submit" class="button button-primary">Create and Join Room</button>
+            </form>
+        </div>
+        <div v-if="roomIds.length > 0" class="card">
+            <h2>My Rooms</h2>
+            <ul class="rooms-list">
+                <li v-for="(roomId, index) of roomIds" :key="index">
+                    <router-link :to="{ name: 'room', params: { userId: user.id, roomId: roomId }}">{{ roomId }}</router-link>
+                </li>
+            </ul>
+        </div>
+        <div v-if="guestRooms.length > 0" class="card">
+            <h2>My Guest Rooms</h2>
+            <ul class="rooms-list">
+                <li v-for="(room, index) of guestRooms" :key="index">
+                    <router-link :to="{ name: 'room', params: { userId: room.userId, roomId: room.roomId }}">{{ room.roomId }}</router-link>
+                </li>
+            </ul>
+        </div>
+    </div>
 </div>
   `,
 });
@@ -98,21 +97,20 @@ export const LoggedOutView = Vue.component("logged-out-view", {
     async created() {
         this.logInUri = await rid.logInUri();
     },
-    computed: {
-        signUpUrl: function () {
-            return rid.signUpUri();
-        },
-    },
     template: `
-<div>
-    <h1>You are logged out</h1>
-    <template v-if="logInUri">
-        <div>
-            <a :href="logInUri">Log in</a>
+<div class="main">
+    <div class="container-small">
+        <div class="card">
+            <h1>You are logged out</h1>
+            <div v-if="logInUri" class="row">
+                <div class="six columns">
+                    <a class="button button-primary u-full-width" :href="logInUri">Log in</a>
+                </div>
+                <div class="six columns">
+                    <a class="button u-full-width" :href="logInUri">Sign up</a>
+                </div>
+            </div>
         </div>
-        <div>
-            <a :href="signUpUrl">Sign up</a>
-        </div>
-    </template>
+    </div>
 </div>`,
 });

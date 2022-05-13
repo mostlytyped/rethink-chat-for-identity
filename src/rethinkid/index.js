@@ -1,11 +1,12 @@
-import router from "../router";
-
 const baseURL = window.location.origin;
 
 const config = {
-    appId: "6d85d59f-d167-4724-acbb-39090821593e",
+    appId: "6744e5ec-175d-472d-955c-e3225ce7bb29",
     signUpRedirectUri: baseURL,
     logInRedirectUri: `${baseURL}/callback`,
+    dataAPIConnectErrorCallback: function (errorMessage) {
+        this.logOut();
+    },
 };
 
 // `RethinkID` is imported via a script tag in index.html

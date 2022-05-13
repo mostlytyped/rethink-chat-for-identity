@@ -31,15 +31,18 @@ const App = Vue.component("app", {
                 id: "",
                 email: "",
             },
+            logInUri: "",
         };
     },
-    created() {
+    async created() {
         // Get user on page load
         const loggedIn = rid.isLoggedIn();
         if (loggedIn) {
             this.loggedIn = true;
             this.user = rid.userInfo();
         }
+
+        this.logInUri = await rid.logInUri();
     },
     methods: {
         signOut() {
@@ -55,12 +58,19 @@ const App = Vue.component("app", {
         <div>
             <ul class="header-menu">
                 <template v-if="loggedIn">
-                    <li>{{ user.id }}</li>
-                    <li>{{ user.email }}</li>
-                    <li><button @click="signOut">Sign out</button></li>
+                    <li class="user-info">
+                        {{ user.email }}<br>
+                        User ID: {{ user.id }}
+                    </li>
+                    <li><button class="button" @click="signOut">Sign out</button></li>
                 </template>
                 <template v-else>
-                    <li><router-link :to="{ name: 'logged-out' }">Sign in/up</router-link></li>
+                    <li>
+                        <a class="button button-primary u-full-width" :href="logInUri">Log in</a>
+                    </li>
+                    <li>
+                        <a class="button u-full-width" :href="logInUri">Sign up</a>
+                    </li>
                 </template>
             </ul>
         </div>
@@ -70,7 +80,7 @@ const App = Vue.component("app", {
 });
 
 Vue.component("chat-item", {
-    props: ["chat", "roomTableName"],
+    props: ["chat", "roomTableName", "myUserId"],
     data() {
         return {
             updateChatFormIsVisible: false,
@@ -79,6 +89,9 @@ Vue.component("chat-item", {
     computed: {
         roomTable: async function () {
             return await rid.table(this.roomTableName);
+        },
+        chatUserId: function () {
+            return this.chat.userId === this.myUserId ? "Me" : this.chat.userId;
         },
     },
     methods: {
@@ -118,7 +131,7 @@ Vue.component("chat-item", {
                 console.error("roomTable.replace error:", e.message);
             }
         },
-        toggleUpdateChat() {
+        toggleEditChat() {
             this.updateChatFormIsVisible = !this.updateChatFormIsVisible;
         },
     },
@@ -126,21 +139,21 @@ Vue.component("chat-item", {
 <li>
     <span class="timestamp">
         {{ new Date(chat.ts).toLocaleString(undefined, {dateStyle: 'short', timeStyle: 'short'}) }}
+        <span class="chat-user-id">{{ chatUserId }}:</span>
     </span>
-    <span class="user">{{ chat.username }}:</span>
     <span class="msg">
         <template v-if="updateChatFormIsVisible">
             <input type="text" v-model="chat.msg" />
-            <button type="submit" @click="updateChat()">Update</button>
-            <button type="submit" @click="replaceChat()">Replace</button>
+            <button class="button-small" type="submit" @click="updateChat()">Update</button>
+            <button class="button-small" type="submit" @click="replaceChat()">Replace</button>
         </template>
         <template v-else>
             {{ chat.msg }}
         </template>
     </span>
     <span class="chat-buttons">
-        <button @click="toggleUpdateChat()">Update</button>
-        <button @click="deleteChat()">Delete</button>
+        <button class="button-small" @click="toggleEditChat()">Edit</button>
+        <button class="button-small" @click="deleteChat()">Delete</button>
     </span>
 </li>
     `,
@@ -152,6 +165,8 @@ Vue.component("chat-room", {
         return {
             chats: [],
             message: "",
+            saveButtonText: "Save users",
+            initialSaveButtonText: "Save users",
             initialPermission: {
                 userId: "",
                 insert: false,
@@ -162,9 +177,17 @@ Vue.component("chat-room", {
             permissions: [],
             hasAccess: true,
             roomUnsubscribe: null,
+            myUserId: "",
         };
     },
     created() {
+        this.saveButtonText = this.initialSaveButtonText;
+
+        const me = rid.userInfo();
+        this.myUserId = me.id;
+
+        console.log("this.myUserId", this.myUserId);
+
         this.addUser();
         this.fetchPermissions();
         this.subscribe();
@@ -189,6 +212,15 @@ Vue.component("chat-room", {
         },
     },
     methods: {
+        async deleteRoom() {
+            const tableName = `${ROOM_TABLE_NAMESPACE}_${this.roomId}`;
+
+            const response = await rid.tablesDrop(tableName);
+
+            console.log("drop table response", response);
+
+            router.push({ name: "home" });
+        },
         async manageGuestRooms() {
             const row = { roomId: this.roomId, userId: this.userId };
 
@@ -389,58 +421,73 @@ Vue.component("chat-room", {
             }
 
             try {
+                this.saveButtonText = "Saving...";
                 await rid.permissionsSet(payload);
                 this.fetchPermissions();
+                this.saveButtonText = "Saved!";
+                setTimeout(() => {
+                    this.saveButtonText = this.initialSaveButtonText;
+                }, 1000);
             } catch (e) {
                 console.error("permissionsSet error", e.message);
             }
         },
         addUser() {
-            this.permissions.push(Object.assign({}, this.initialPermission));
+            this.permissions.unshift(Object.assign({}, this.initialPermission));
         },
     },
     template: `
 <div class="chat-room">
-    <div class="chat-ui">
+<div class="chat-ui">
         <ul id="chat-log">
-            <chat-item v-for="chat in chats" :key="chat.id" :chat="chat" :roomTableName="roomTableName"></chat-item>
+            <chat-item v-for="chat in chats" :key="chat.id" :chat="chat" :myUserId="myUserId" :roomTableName="roomTableName"></chat-item>
         </ul>
         <form class="message-form" v-on:submit.prevent="sendMessage">
-            <input v-model="message" autocomplete="off" />
+            <input type="text" v-model="message" autocomplete="off" />
             <button>Send</button>
         </form>
     </div>
-    <div class="chat-permissions">
-        <template v-if="isOwner">
-            <h3>Permissions</h3>
+    <div class="chat-room-info">
+    <div class="space-between">
+        <h3>{{ this.roomId }}</h3>
+        <button v-if="isOwner" class="button-small" type="button" @click="deleteRoom()">Delete room</button>
+    </div>
+    <template v-if="isOwner">
+            <p>To invite someone, share the URL in your address bar, and add them as a user below.</p>
+            <h4>Users</h4>
+            <p>To remove a user, save without permissions.</p>
             <form v-on:submit.prevent="setPermissions">
-                <div class="permission-group" v-for="(p, index) of permissions" :key="index">
-                    <input type="text" v-model="permissions[index].userId" placeholder="User ID" />
-                    
-                    <div>
-                        <input type="checkbox" :id="'permissions-' + index + '-read'" value="true" v-model="permissions[index].read">
-                        <label :for="'permissions-' + index + '-read'">Read</label>
-                    </div>
-                    <div>
-                        <input type="checkbox" :id="'permissions-' + index + '-insert'" value="true" v-model="permissions[index].insert">
-                        <label :for="'permissions-' + index + '-insert'">Insert</label>
-                    </div>
-                    <div>
-                        <input type="checkbox" :id="'permissions-' + index + '-update'" value="true" v-model="permissions[index].update">
-                        <label :for="'permissions-' + index + '-update'">Update</label>
-                    </div>
-                    <div>
-                        <input type="checkbox" :id="'permissions-' + index + '-delete'" value="true" v-model="permissions[index].delete">
-                        <label :for="'permissions-' + index + '-delete'">Delete</label>
-                    </div>
+                <div class="space-between">
+                    <button class="button-small" type="button" @click="addUser">Add user</button>
+                    <button v-if="permissions.length > 0" class="button-primary button-small" type="submit">{{ saveButtonText }}</button>
+                </div>
+                <div class="card" v-for="(p, index) of permissions" :key="index">
+                    <label :for="'user-id-' + index">User ID</label>
+                    <input :id="'user-id-' + index" class="u-full-width" type="text" v-model="permissions[index].userId" placeholder="e.g. 983c783f-6f9e-4367-83d2-0cdb644a1f1e" />
+
+                    <label>
+                        <input type="checkbox" value="true" v-model="permissions[index].read">
+                        <span class="label-body">Read</span>
+                    </label>
+                    <label>
+                        <input type="checkbox" value="true" v-model="permissions[index].insert">
+                        <span class="label-body">Insert</span>
+                    </label>
+                    <label>
+                        <input type="checkbox" value="true" v-model="permissions[index].update">
+                        <span class="label-body">Update</span>
+                    </label>
+                    <label>
+                        <input type="checkbox" value="true" v-model="permissions[index].delete">
+                        <span class="label-body">Delete</span>
+                    </label>
+
                     <input type="hidden" v-model="permissions[index].readId" />
                     <input type="hidden" v-model="permissions[index].updateId" />
                     <input type="hidden" v-model="permissions[index].insertId" />
                     <input type="hidden" v-model="permissions[index].deleteId" />
                 </div>
-                <button>Update</button>
             </form>
-            <div><button @click="addUser">Add user</button></div>
         </template>
         <template v-else>
             <p>You are a guest in this room.</p>
