@@ -44,11 +44,6 @@ const App = Vue.component("app", {
 
         this.logInUri = await rid.logInUri();
     },
-    computed: {
-        signUpUrl: function () {
-            return rid.signUpUri();
-        },
-    },
     methods: {
         signOut() {
             rid.logOut();
@@ -74,7 +69,7 @@ const App = Vue.component("app", {
                         <a class="button button-primary u-full-width" :href="logInUri">Log in</a>
                     </li>
                     <li>
-                        <a class="button u-full-width" :href="signUpUrl">Sign up</a>
+                        <a class="button u-full-width" :href="logInUri">Sign up</a>
                     </li>
                 </template>
             </ul>

@@ -97,11 +97,6 @@ export const LoggedOutView = Vue.component("logged-out-view", {
     async created() {
         this.logInUri = await rid.logInUri();
     },
-    computed: {
-        signUpUrl: function () {
-            return rid.signUpUri();
-        },
-    },
     template: `
 <div class="main">
     <div class="container-small">
@@ -112,7 +107,7 @@ export const LoggedOutView = Vue.component("logged-out-view", {
                     <a class="button button-primary u-full-width" :href="logInUri">Log in</a>
                 </div>
                 <div class="six columns">
-                    <a class="button u-full-width" :href="signUpUrl">Sign up</a>
+                    <a class="button u-full-width" :href="logInUri">Sign up</a>
                 </div>
             </div>
         </div>
