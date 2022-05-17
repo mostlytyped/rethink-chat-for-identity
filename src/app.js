@@ -87,8 +87,8 @@ Vue.component("chat-item", {
         };
     },
     computed: {
-        roomTable: async function () {
-            return await rid.table(this.roomTableName);
+        roomTable: function () {
+            return rid.table(this.roomTableName);
         },
         chatUserId: function () {
             return this.chat.userId === this.myUserId ? "Me" : this.chat.userId;
@@ -201,11 +201,11 @@ Vue.component("chat-room", {
         roomTableName: function () {
             return `${ROOM_TABLE_NAMESPACE}_${this.roomId}`;
         },
-        roomTable: async function () {
-            return await rid.table(this.roomTableName, { userId: this.userId });
+        roomTable: function () {
+            return rid.table(this.roomTableName, { userId: this.userId });
         },
-        guestTable: async function () {
-            return await rid.table(GUEST_ROOMS_TABLE_NAME);
+        guestTable: function () {
+            return rid.table(GUEST_ROOMS_TABLE_NAME);
         },
         isOwner: function () {
             return this.user.id === this.$route.params.userId;
