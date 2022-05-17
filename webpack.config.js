@@ -1,7 +1,11 @@
+const dotenv = require("dotenv");
 const path = require("path");
 const webpack = require("webpack");
 const CopyPlugin = require("copy-webpack-plugin");
 const RemoveEmptyScriptsPlugin = require("webpack-remove-empty-scripts");
+
+// this will update the process.env with environment variables in .env file
+dotenv.config();
 
 module.exports = {
     mode: "development",
@@ -43,5 +47,8 @@ module.exports = {
             patterns: [{ from: "public", to: "." }],
         }),
         new RemoveEmptyScriptsPlugin(),
+        new webpack.DefinePlugin({
+            "process.env.VUE_APP_APP_ID": JSON.stringify(process.env.VUE_APP_APP_ID),
+        }),
     ],
 };
